@@ -23,9 +23,9 @@ class CastleTvProvider : MainAPI() {
     }
     
     override var mainUrl = "https://api.hlowb.com"
-    override var name = "Castle TV (Use VLC)"
+    override var name = "Castle TV"
     override val hasMainPage = true
-    override var lang = "ta"
+    override var lang = "hi"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
     private val keySupFixx = BuildConfig.CASTLE_SUFFIX
