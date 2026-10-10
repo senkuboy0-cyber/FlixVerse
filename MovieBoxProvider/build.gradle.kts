@@ -1,41 +1,13 @@
-// use an integer for version numbers
-version = 25
-
-android {
-    buildFeatures {
-        buildConfig = true
-    }
-}
-
-dependencies {
-    val cloudstream by configurations
-    implementation("androidx.appcompat:appcompat:1.7.1")
-    implementation("com.google.android.material:material:1.14.0")
-    cloudstream("com.lagradost:cloudstream3:pre-release")
-}
+version = 1
 
 cloudstream {
-    language = "hi"
-    // All of these properties are optional, you can safely remove them
-
-    description = "Multi Language Movies and Series Provider"
-    authors = listOf("NivinCNC,Phisher98")
-
-    /**
-     * Status int as the following:
-     * 0: Down
-     * 1: Ok
-     * 2: Slow
-     * 3: Beta only
-     * */
-    status = 1 // will be 3 if unspecified
+    language = "en"
+    authors = listOf("senkuboy0-cyber")
+    description = "MovieBox Provider for Movies and TV Shows"
+    iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png"
     tvTypes = listOf(
-        "Movie",
-        "TvSeries"
+        TvType.Movie,
+        TvType.TvSeries
     )
-    requiresResources = true
-
-    iconUrl = "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/raw/refs/heads/master/MovieBoxProvider/icon.png"
-
-    isCrossPlatform = false
+    isNSFW = false
 }
