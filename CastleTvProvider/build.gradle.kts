@@ -16,7 +16,7 @@ android {
 }
 
 cloudstream {
-    language = "ta"
+    language = "hi"
     // All of these properties are optional, you can safely remove them
 
     description = "Castle TV Movies and Series Provider"
