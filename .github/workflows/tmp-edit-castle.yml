@@ -1,0 +1,38 @@
+name: Temp edit CastleTV
+
+# Temporary: runs once when this file is pushed, then it gets deleted.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/tmp-edit-castle.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Edit CastleTvProvider.kt
+        run: |
+          F=CastleTvProvider/src/main/kotlin/com/castletv/CastleTvProvider.kt
+          grep -c 'override var name = "Castle TV (Use VLC)"' "$F" | grep -qx 1
+          grep -c 'override var lang = "ta"' "$F" | grep -qx 1
+          sed -i 's/override var name = "Castle TV (Use VLC)"/override var name = "Castle TV"/' "$F"
+          sed -i 's/override var lang = "ta"/override var lang = "hi"/' "$F"
+          grep -n 'override var name\|override var lang' "$F"
+
+      - name: Commit and start build.yml
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CastleTvProvider/src/main/kotlin/com/castletv/CastleTvProvider.kt
+          git commit -m "CastleTvProvider: name Castle TV, lang hi"
+          git push origin HEAD:main
+          gh workflow run build.yml --ref main
