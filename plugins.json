@@ -22,26 +22,5 @@
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/09/mlsbd-icon.png",
         "apiVersion": 1,
         "fileHash": "sha256-40b6fa6b165e186191b2281e95782bc4042da7deb98fa564484ca31313dd9370"
-    },
-    {
-        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MovieBoxProvider.cs3",
-        "status": 1,
-        "version": 26,
-        "name": "MovieBoxProvider",
-        "internalName": "MovieBoxProvider",
-        "authors": [
-            "senkuboy0-cyber"
-        ],
-        "description": "Multi Language Movies and Series Provider",
-        "fileSize": 70336,
-        "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
-        "language": "hi",
-        "tvTypes": [
-            "Movie",
-            "TvSeries"
-        ],
-        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
-        "apiVersion": 1,
-        "fileHash": "sha256-0560ba863f57f500eb17064265bcffc4db7899cb9d2e61b5b9ecd15b0fc30427"
     }
 ]
