@@ -1,1 +1,7 @@
-*.iml\n.gradle\n/local.properties\n/.idea\n.DS_Store\n/build\n**/build/\n
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+**/build/
