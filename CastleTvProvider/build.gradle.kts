@@ -2,8 +2,16 @@
 version = 29
 
 android {
+    // Root build sets namespace "com.anime"; override so BuildConfig is generated in com.castletv
+    namespace = "com.castletv"
+
     buildFeatures {
         buildConfig = true
+    }
+
+    defaultConfig {
+        // In the original repo this field was injected from the root build.gradle.kts
+        buildConfigField("String", "CASTLE_SUFFIX", "\"T!BgJB\"")
     }
 }
 
@@ -29,4 +37,3 @@ cloudstream {
 
     iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/CastleTvProvider/icon.png"
 }
-
