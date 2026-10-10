@@ -1,1 +1,116 @@
-import com.android.build.api.dsl.LibraryExtension\nimport com.lagradost.cloudstream3.gradle.CloudstreamExtension\nimport org.gradle.api.plugins.JavaPluginExtension\nimport org.gradle.kotlin.dsl.register\nimport org.jetbrains.kotlin.gradle.dsl.JvmTarget\nimport org.jetbrains.kotlin.gradle.tasks.KotlinCompile\nimport org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile\n\nbuildscript {\n    repositories {\n        google()\n        mavenCentral()\n        maven(\"https://jitpack.io\")\n    }\n\n    dependencies {\n        classpath(\"com.android.tools.build:gradle:9.1.1\")\n        classpath(\"com.github.recloudstream.gradle:gradle:81b1d424d\")\n        classpath(\"org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.0\")\n    }\n}\n\n// Note: Removed the subprojects block that only contained the redundant \n// \"-Xannotation-default-target=param-property\" argument to prevent warnings.\n\nallprojects {\n    repositories {\n        google()\n        mavenCentral()\n        maven(\"https://jitpack.io\")\n    }\n}\n\nfun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = extensions.getByName<CloudstreamExtension>(\"cloudstream\").configuration()\n\nfun Project.android(configuration: LibraryExtension.() -> Unit) {\n    extensions.getByName<LibraryExtension>(\"android\").apply {\n        project.extensions.findByType(JavaPluginExtension::class.java)?.apply {\n            toolchain {\n                languageVersion.set(JavaLanguageVersion.of(17))\n            }\n        }\n\n        configuration()\n    }\n}\n\nsubprojects {\n    apply(plugin = \"com.android.library\")\n    apply(plugin = \"com.lagradost.cloudstream3.gradle\")\n\n    cloudstream {\n        setRepo(System.getenv(\"GITHUB_REPOSITORY\") ?: \"https://github.com/senkuboy0-cyber/FlixVerse\")\n        authors = listOf(\"senkuboy0-cyber\")\n    }\n\n    android {\n        namespace = \"com.anime\"\n        compileSdk = 36\n\n        defaultConfig {\n            minSdk = 21\n        }\n\n        lint {\n            targetSdk = 36\n        }\n\n        compileOptions {\n            // Updated source and target compatibility to Java 11 \n            // This fixes the inline bytecode mismatch error.\n            sourceCompatibility = JavaVersion.VERSION_11\n            targetCompatibility = JavaVersion.VERSION_11\n        }\n\n        tasks.withType<KotlinJvmCompile> {\n            compilerOptions {\n                // Updated JVM Target to 11 to match compileOptions\n                jvmTarget.set(JvmTarget.JVM_11)\n                \n                // Removed the redundant \"-Xannotation-default-target=param-property\" argument\n                freeCompilerArgs.addAll(\n                    \"-Xno-call-assertions\",\n                    \"-Xno-param-assertions\",\n                    \"-Xno-receiver-assertions\"\n                )\n            }\n        }\n    }\n\n    dependencies {\n        val implementation by configurations\n        val cloudstream by configurations\n        cloudstream(\"com.lagradost:cloudstream3:pre-release\")\n\n        implementation(kotlin(\"stdlib\"))\n        implementation(\"com.github.Blatzar:NiceHttp:0.4.18\")\n        implementation(\"org.jsoup:jsoup:1.22.2\")\n        implementation(\"androidx.annotation:annotation:1.10.0\")\n        implementation(\"com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1\")\n        implementation(\"com.fasterxml.jackson.core:jackson-databind:2.13.1\")\n        implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2\")\n        implementation(\"org.mozilla:rhino:1.8.1\")\n        implementation(\"me.xdrop:fuzzywuzzy:1.4.0\")\n        implementation(\"com.google.code.gson:gson:2.14.0\")\n        implementation(\"org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0\")\n        implementation(\"org.bouncycastle:bcpkix-jdk18on:1.84\")\n        // Required: jsoup 1.22+ references org.jspecify.annotations in its API,\n        // Kotlin type inference needs it on the classpath (TooniboyProvider)\n        implementation(\"org.jspecify:jspecify:1.0.0\")\n    }\n}\n\ntasks.register<Delete>(\"clean\") {\n    delete(rootProject.layout.buildDirectory)\n}
+import com.android.build.api.dsl.LibraryExtension
+import com.lagradost.cloudstream3.gradle.CloudstreamExtension
+import org.gradle.api.plugins.JavaPluginExtension
+import org.gradle.kotlin.dsl.register
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://jitpack.io")
+    }
+
+    dependencies {
+        classpath("com.android.tools.build:gradle:9.1.1")
+        classpath("com.github.recloudstream.gradle:gradle:81b1d424d")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.0")
+    }
+}
+
+// Note: Removed the subprojects block that only contained the redundant 
+// "-Xannotation-default-target=param-property" argument to prevent warnings.
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven("https://jitpack.io")
+    }
+}
+
+fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = extensions.getByName<CloudstreamExtension>("cloudstream").configuration()
+
+fun Project.android(configuration: LibraryExtension.() -> Unit) {
+    extensions.getByName<LibraryExtension>("android").apply {
+        project.extensions.findByType(JavaPluginExtension::class.java)?.apply {
+            toolchain {
+                languageVersion.set(JavaLanguageVersion.of(17))
+            }
+        }
+
+        configuration()
+    }
+}
+
+subprojects {
+    apply(plugin = "com.android.library")
+    apply(plugin = "com.lagradost.cloudstream3.gradle")
+
+    cloudstream {
+        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/senkuboy0-cyber/Anime-Dekho")
+        authors = listOf("senkuboy0-cyber")
+    }
+
+    android {
+        namespace = "com.anime"
+        compileSdk = 36
+
+        defaultConfig {
+            minSdk = 21
+        }
+
+        lint {
+            targetSdk = 36
+        }
+
+        compileOptions {
+            // Updated source and target compatibility to Java 11 
+            // This fixes the inline bytecode mismatch error.
+            sourceCompatibility = JavaVersion.VERSION_11
+            targetCompatibility = JavaVersion.VERSION_11
+        }
+
+        tasks.withType<KotlinJvmCompile> {
+            compilerOptions {
+                // Updated JVM Target to 11 to match compileOptions
+                jvmTarget.set(JvmTarget.JVM_11)
+                
+                // Removed the redundant "-Xannotation-default-target=param-property" argument
+                freeCompilerArgs.addAll(
+                    "-Xno-call-assertions",
+                    "-Xno-param-assertions",
+                    "-Xno-receiver-assertions"
+                )
+            }
+        }
+    }
+
+    dependencies {
+        val implementation by configurations
+        val cloudstream by configurations
+        cloudstream("com.lagradost:cloudstream3:pre-release")
+
+        implementation(kotlin("stdlib"))
+        implementation("com.github.Blatzar:NiceHttp:0.4.18")
+        implementation("org.jsoup:jsoup:1.22.2")
+        implementation("androidx.annotation:annotation:1.10.0")
+        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1")
+        implementation("com.fasterxml.jackson.core:jackson-databind:2.13.1")
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+        implementation("org.mozilla:rhino:1.8.1")
+        implementation("me.xdrop:fuzzywuzzy:1.4.0")
+        implementation("com.google.code.gson:gson:2.14.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+        implementation("org.bouncycastle:bcpkix-jdk18on:1.84")
+        // Required: jsoup 1.22+ references org.jspecify.annotations in its API,
+        // Kotlin type inference needs it on the classpath (TooniboyProvider)
+        implementation("org.jspecify:jspecify:1.0.0")
+    }
+}
+
+tasks.register<Delete>("clean") {
+    delete(rootProject.layout.buildDirectory)
+}
