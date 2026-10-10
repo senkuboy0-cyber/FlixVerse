@@ -1,0 +1,31 @@
+name: Patch MlsbdProvider
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  patch-file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout FlixVerse
+        uses: actions/checkout@v4
+
+      - name: Patch MlsbdProvider.kt
+        run: |
+          FILE="MlsbdProvider/src/main/kotlin/com/mlsbd/MlsbdProvider.kt"
+          # Replace newHomePageResponse with HomePageResponse(listOf(HomePageList(..., isHorizontalImages = true)))
+          sed -i 's/return newHomePageResponse(request.name, items, items.isNotEmpty() && page < 50)/return HomePageResponse(listOf(HomePageList(request.name, items, isHorizontalImages = true)), items.isNotEmpty() \&\& page < 50)/g' "$FILE"
+          
+          # Ensure imports exist
+          if ! grep -q "import com.lagradost.cloudstream3.HomePageList" "$FILE"; then
+            sed -i '/import com.lagradost.cloudstream3.HomePageResponse/a import com.lagradost.cloudstream3.HomePageList' "$FILE"
+          fi
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -m "Update posters to landscape on main page" || echo "No changes"
+          git push
