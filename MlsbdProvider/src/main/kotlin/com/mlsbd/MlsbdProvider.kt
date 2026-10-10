@@ -232,7 +232,7 @@ class MlsbdProvider : MainAPI() {
             else newMovieSearchResponse(displayTitle, href, TvType.Movie) { this.posterUrl = finalPoster }
         }.filterNotNull()
         
-        return newHomePageResponse(request.name, items, items.isNotEmpty() && page < 50)
+        return HomePageResponse(listOf(HomePageList(request.name, items, isHorizontalImages = true)), items.isNotEmpty() && page < 50)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
