@@ -2,7 +2,7 @@ version = 2
 
 cloudstream {
     language = "hi"
-    authors = listOf("Your Name")
+    authors = listOf("senkuboy0-cyber")
     description = "MLSBD Provider for Movies and TV Series"
     /**
      * Status int as the following:
