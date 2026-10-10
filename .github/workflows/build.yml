@@ -3,6 +3,8 @@ name: Build CloudStream Plugin
 on:
   push:
     branches: [master, main]
+    paths-ignore:
+      - ".github/workflows/add-castletv.yml"
   workflow_dispatch:
 
 permissions:
