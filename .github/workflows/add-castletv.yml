@@ -1,6 +1,7 @@
 name: Add CastleTV and Build
 
-# Manual run only: Actions -> "Add CastleTV and Build" -> Run workflow.
+# Runs automatically when this file is pushed to main, and can also be run by hand:
+# Actions -> "Add CastleTV and Build" -> Run workflow.
 # One run does everything:
 #   1. copies CastleTvProvider from the CNCVerse repo
 #   2. changes authors + iconUrl in its build.gradle.kts
@@ -8,6 +9,10 @@ name: Add CastleTV and Build
 #   4. adds the module to settings.gradle.kts and build.yml
 #   5. builds all .cs3 files and deploys them to the builds branch
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/add-castletv.yml"
   workflow_dispatch:
 
 permissions:
