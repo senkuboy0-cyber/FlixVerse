@@ -3,8 +3,6 @@ name: Build CloudStream Plugin
 on:
   push:
     branches: [master, main]
-    paths-ignore:
-      - ".github/workflows/add-castletv.yml"
   workflow_dispatch:
 
 permissions:
@@ -34,9 +32,11 @@ jobs:
       - name: Build and Generate
         run: |
           ./gradlew MlsbdProvider:make
+          ./gradlew CastleTvProvider:make
           ./gradlew makePluginsJson
           mkdir -p build
           cp MlsbdProvider/build/MlsbdProvider.cs3 build/
+          cp CastleTvProvider/build/CastleTvProvider.cs3 build/
           echo '{
             "name": "FlixVerse",
             "description": "Your ultimate CloudStream repository for unlimited movies, TV series, and cinematic content from around the web.",
