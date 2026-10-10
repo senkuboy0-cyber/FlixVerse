@@ -1,0 +1,26 @@
+name: Fetch MovieBoxProvider
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  copy-folder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout FlixVerse
+        uses: actions/checkout@v4
+
+      - name: Fetch MovieBoxProvider
+        run: |
+          git clone --depth 1 https://github.com/Rahul6051276/cloudstream-extensions-phisher.git temp_repo
+          cp -r temp_repo/MovieBoxProvider ./
+          rm -rf temp_repo
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MovieBoxProvider
+          git commit -m "Add MovieBoxProvider from Rahul6051276/cloudstream-extensions-phisher" || echo "No changes"
+          git push
