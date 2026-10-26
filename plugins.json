@@ -43,5 +43,26 @@
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/09/mlsbd-icon.png",
         "apiVersion": 1,
         "fileHash": "sha256-40b6fa6b165e186191b2281e95782bc4042da7deb98fa564484ca31313dd9370"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MovieBoxProvider.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "MovieBoxProvider",
+        "internalName": "MovieBoxProvider",
+        "authors": [
+            "senkuboy0-cyber"
+        ],
+        "description": "MovieBox Movies and Series (multi-audio)",
+        "fileSize": 60983,
+        "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
+        "language": "hi",
+        "tvTypes": [
+            "Movie",
+            "TvSeries"
+        ],
+        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-b4c19f15501f93deac0d50da7ee06bc548bbd144f876a8145c077266b087c741"
     }
 ]
