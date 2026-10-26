@@ -312,7 +312,8 @@ object MovieBoxTv {
         return try {
             val (u, sp) = url("$BFF/user/visitor-login", emptyMap())
             val body = "{}"
-            val res = app.post(u, headers = headers("POST", sp, body), requestBody = body.toRequestBody("application/json".toMediaType()))
+            // ByteArray body: a String body makes OkHttp send "application/json; charset=utf-8", which breaks the signature (407)
+            val res = app.post(u, headers = headers("POST", sp, body), requestBody = body.toByteArray(Charsets.UTF_8).toRequestBody("application/json".toMediaType()))
             val t = MovieBoxApi.mapper.readTree(res.text)["data"]?.get("token")?.asText()
             if (!t.isNullOrBlank()) {
                 token = t
