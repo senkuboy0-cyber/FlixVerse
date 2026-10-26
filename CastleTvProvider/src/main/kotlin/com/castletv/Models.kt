@@ -302,13 +302,14 @@ object CastleTmdb {
             val images = mapper.readValue<TmdbImagesResponse>(
                 app.get("$API/$kind/${match.id}/images?api_key=$KEY&include_image_language=en,hi,null").text
             )
-            // Textless backdrop first
-            val backdrop = images.backdrops?.let { b ->
-                (b.firstOrNull { it.iso6391 == null } ?: b.firstOrNull())?.filePath
+            fun TmdbImageItem.isSvg() = filePath?.endsWith(".svg", ignoreCase = true) == true
+            // Backdrop: no language, then English, then any (never svg)
+            val backdrop = images.backdrops?.filterNot { it.isSvg() }?.let { b ->
+                (b.firstOrNull { it.iso6391 == null } ?: b.firstOrNull { it.iso6391 == "en" } ?: b.firstOrNull())?.filePath
             }?.let { "$IMG$it" }
-            // English logo, then Hindi, then any
-            val logo = images.logos?.let { l ->
-                (l.firstOrNull { it.iso6391 == "en" } ?: l.firstOrNull { it.iso6391 == "hi" } ?: l.firstOrNull())?.filePath
+            // Logo: English, then no language, then any (never svg)
+            val logo = images.logos?.filterNot { it.isSvg() }?.let { l ->
+                (l.firstOrNull { it.iso6391 == "en" } ?: l.firstOrNull { it.iso6391 == null } ?: l.firstOrNull())?.filePath
             }?.let { "$IMG$it" }
             backdrop to logo
         } catch (e: Exception) {

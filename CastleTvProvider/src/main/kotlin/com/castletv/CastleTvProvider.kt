@@ -141,26 +141,34 @@ class CastleTvProvider : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
+    override suspend fun search(query: String): List<SearchResponse> =
+        search(query, 1)?.items.orEmpty()
+
+    /** Paginated search: the API returns page/pages, 30 results per page. */
+    override suspend fun search(query: String, page: Int): SearchResponseList? {
         return try {
-            if (query.isBlank()) return emptyList()
-            val securityKey = getSecurityKey() ?: return emptyList()
-            val searchUrl = "$mainUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&keyword=${java.net.URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=1&size=30"
+            if (query.isBlank()) return newSearchResponseList(emptyList(), false)
+            val securityKey = getSecurityKey() ?: return newSearchResponseList(emptyList(), false)
+            val searchUrl = "$mainUrl/film-api/v1.1.0/movie/searchByKeyword?channel=IndiaA&clientType=1&keyword=${java.net.URLEncoder.encode(query, "UTF-8")}&lang=en-US&mode=1&packageName=com.external.castle&page=$page&size=30"
 
             val encryptedData = app.get(searchUrl).text
-            if (encryptedData.isBlank()) return emptyList()
-            val decryptedJson = decryptData(encryptedData, securityKey) ?: return emptyList()
+            if (encryptedData.isBlank()) return newSearchResponseList(emptyList(), false)
+            val decryptedJson = decryptData(encryptedData, securityKey) ?: return newSearchResponseList(emptyList(), false)
+            val data = mapper.readValue<SearchApiResponse>(decryptedJson).data
 
-            mapper.readValue<SearchApiResponse>(decryptedJson).data.rows?.mapNotNull { item ->
+            val results = data.rows?.mapNotNull { item ->
                 val title = item.title ?: return@mapNotNull null
                 val id = item.id?.toString() ?: return@mapNotNull null
                 newMovieSearchResponse(name = title, url = id, type = tvTypeOf(item.movieType)) {
                     this.posterUrl = item.coverVerticalImage ?: item.coverHorizontalImage
                     this.year = yearOf(item.publishTime)
                 }
-            } ?: emptyList()
+            }.orEmpty()
+
+            val hasNext = results.isNotEmpty() && page < (data.pages ?: page)
+            newSearchResponseList(results, hasNext)
         } catch (e: Exception) {
-            emptyList()
+            newSearchResponseList(emptyList(), false)
         }
     }
 
