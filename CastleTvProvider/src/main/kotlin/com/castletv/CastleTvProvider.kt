@@ -370,7 +370,7 @@ class CastleTvProvider : MainAPI() {
                     val q = if (apiRes == 2) 720 else 480
                     if (seen.add("raw|$apiUrl")) {
                         callback.invoke(
-                            newExtractorLink(source = name, name = "$name $label [${q}p]", url = apiUrl, type = ExtractorLinkType.M3U8) {
+                            newExtractorLink(source = name, name = "$name $label", url = apiUrl, type = ExtractorLinkType.M3U8) {
                                 this.headers = linkHeaders
                                 this.quality = q
                             }
@@ -395,7 +395,7 @@ class CastleTvProvider : MainAPI() {
                 if (audio.size <= 1) {
                     for ((q, url) in qualities) {
                         callback.invoke(
-                            newExtractorLink(source = name, name = "$name $label [${q}p]", url = url, type = ExtractorLinkType.M3U8) {
+                            newExtractorLink(source = name, name = "$name $label", url = url, type = ExtractorLinkType.M3U8) {
                                 this.headers = linkHeaders
                                 this.quality = q
                             }
@@ -410,7 +410,7 @@ class CastleTvProvider : MainAPI() {
                             callback.invoke(
                                 newExtractorLink(
                                     source = name,
-                                    name = "$name $language [${q}p]",
+                                    name = "$name $language",
                                     url = CastleAudioProxy.playlistUrl(url, stream.pid),
                                     type = ExtractorLinkType.M3U8
                                 ) {
