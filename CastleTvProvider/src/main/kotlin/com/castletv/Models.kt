@@ -370,9 +370,16 @@ object CastleHls {
         )
     }
 
-    /** Full (non-preview) playlist for a quality folder, on the unsigned img.{domain} host (img1 returns 403 without a signature). */
-    fun qualityUrl(p: HlsParts, quality: Int): String =
-        "https://img.${p.domain}/${p.path}/${p.hash}/$quality/${p.indexFile}"
+    /**
+     * Full (non-preview) playlist for a quality folder, on the unsigned img.{domain} host
+     * (img1 returns 403 without a signature).
+     * Each quality of the same title can sit under either hls_mps or hls, so both are returned,
+     * the path the API gave first.
+     */
+    fun qualityUrls(p: HlsParts, quality: Int): List<String> =
+        listOf(p.path, if (p.path == "hls") "hls_mps" else "hls").map { path ->
+            "https://img.${p.domain}/$path/${p.hash}/$quality/${p.indexFile}"
+        }
 }
 
 // ===================== getVideo2 request body =====================
