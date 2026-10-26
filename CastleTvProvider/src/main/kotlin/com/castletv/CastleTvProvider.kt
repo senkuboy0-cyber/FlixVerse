@@ -381,16 +381,45 @@ class CastleTvProvider : MainAPI() {
                 }
 
                 // Expand to full 1080/720/480, only the ones that exist on the CDN
+                val qualities = mutableListOf<Pair<Int, String>>()
                 for (q in listOf(1080, 720, 480)) {
                     if (!seen.add("${parts.hash}|$q")) continue
                     val url = CastleHls.qualityUrls(parts, q).firstOrNull { isPlayableM3u8(it) } ?: continue
-                    callback.invoke(
-                        newExtractorLink(source = name, name = "$name $label [${q}p]", url = url, type = ExtractorLinkType.M3U8) {
-                            this.headers = linkHeaders
-                            this.quality = q
+                    qualities.add(q to url)
+                }
+                if (qualities.isEmpty()) continue
+
+                // All languages are muxed into the same segments; the internal player reads only one.
+                // With more than one audio stream, serve one link per language through the local proxy.
+                val audio = CastleAudioProxy.probe(qualities.last().second)
+                if (audio.size <= 1) {
+                    for ((q, url) in qualities) {
+                        callback.invoke(
+                            newExtractorLink(source = name, name = "$name $label [${q}p]", url = url, type = ExtractorLinkType.M3U8) {
+                                this.headers = linkHeaders
+                                this.quality = q
+                            }
+                        )
+                        any = true
+                    }
+                } else {
+                    CastleAudioProxy.upstreamHeaders = linkHeaders
+                    audio.forEachIndexed { index, stream ->
+                        val language = CastleAudioProxy.languageName(stream.language, index)
+                        for ((q, url) in qualities) {
+                            callback.invoke(
+                                newExtractorLink(
+                                    source = name,
+                                    name = "$name $language [${q}p]",
+                                    url = CastleAudioProxy.playlistUrl(url, stream.pid),
+                                    type = ExtractorLinkType.M3U8
+                                ) {
+                                    this.quality = q
+                                }
+                            )
+                            any = true
                         }
-                    )
-                    any = true
+                    }
                 }
             }
             any
