@@ -388,11 +388,19 @@ class CastleTvProvider : MainAPI() {
                     continue
                 }
 
-                // Expand to full 1080/720/480, only the ones that exist on the CDN
+                // Expand to full 1080/720/480, only the ones that exist on the CDN.
+                // A quality the episode lists (resolution 1/2/3 = 480/720/1080) is kept even when
+                // its probe fails (slow or flaky network), on the path the API gave.
+                val listed = episode.videos.orEmpty().mapNotNull { v ->
+                    when (v.resolution) { 1 -> 480; 2 -> 720; 3 -> 1080; else -> null }
+                }.toSet()
                 val qualities = mutableListOf<Pair<Int, String>>()
                 for (q in listOf(1080, 720, 480)) {
                     if (!seen.add("${parts.hash}|$q")) continue
-                    val url = CastleHls.qualityUrls(parts, q).firstOrNull { isPlayableM3u8(it) } ?: continue
+                    val candidates = CastleHls.qualityUrls(parts, q)
+                    val url = candidates.firstOrNull { isPlayableM3u8(it) }
+                        ?: candidates.firstOrNull()?.takeIf { q in listed }
+                        ?: continue
                     qualities.add(q to url)
                 }
                 if (qualities.isEmpty()) continue
