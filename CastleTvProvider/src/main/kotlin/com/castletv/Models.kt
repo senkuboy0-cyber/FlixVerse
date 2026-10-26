@@ -5,6 +5,11 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.base64DecodeArray
+import java.nio.charset.StandardCharsets
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 // ===================== Castle API responses =====================
 data class CastleApiResponse(
@@ -228,35 +233,6 @@ data class SubtitleData(
     val isAI: Int? = null
 )
 
-// ===================== Home categories =====================
-
-/**
- * A home category is one row of a Castle tab.
- * The home API is called with the tab's locationId and the row is picked by its id.
- * locationId: 1001 = Home, 1002 = Series, 1003 = Movies, 1069 = Anime
- */
-data class CastleCategory(
-    val name: String,
-    val locationId: Int,
-    val rowId: Long,
-)
-
-object CastleCategories {
-    val list = listOf(
-        CastleCategory("Popular Movies", 1001, 5661125979266048),
-        CastleCategory("Popular WebSeries", 1001, 5836681858493440),
-        CastleCategory("International Movies", 1003, 5893762742585344),
-        CastleCategory("Bollywood", 1003, 5806276744741888),
-        CastleCategory("Tollywood Movies", 1001, 6117579693457408),
-        CastleCategory("Comedy", 1003, 5760725379365888),
-        CastleCategory("Romance", 1003, 5760730682670080),
-        CastleCategory("Korean Drama Hindi", 1002, 7954955612732416),
-    )
-
-    /** mainPageOf key: "locationId|rowId" */
-    fun key(c: CastleCategory) = "${c.locationId}|${c.rowId}"
-}
-
 // ===================== TMDB =====================
 
 data class TmdbSearchResponse(val results: List<TmdbSearchItem>? = null)
@@ -338,5 +314,85 @@ object CastleTmdb {
         } catch (e: Exception) {
             null to null
         }
+    }
+}
+
+// ===================== Crypto =====================
+
+/**
+ * Castle responses are AES/CBC/PKCS5 encrypted.
+ * Key = base64-decoded security key + build suffix, padded or cut to 16 bytes. IV = key.
+ */
+object CastleCrypto {
+    private fun deriveKey(apiKeyB64: String, suffix: String): ByteArray {
+        val keyMaterial = base64DecodeArray(apiKeyB64) + suffix.toByteArray(StandardCharsets.US_ASCII)
+        return when {
+            keyMaterial.size < 16 -> keyMaterial + ByteArray(16 - keyMaterial.size)
+            keyMaterial.size > 16 -> keyMaterial.copyOfRange(0, 16)
+            else -> keyMaterial
+        }
+    }
+
+    fun decrypt(encryptedB64: String, apiKeyB64: String, suffix: String): String? {
+        return try {
+            val aesKey = deriveKey(apiKeyB64, suffix)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, "AES"), IvParameterSpec(aesKey))
+            String(cipher.doFinal(base64DecodeArray(encryptedB64)), StandardCharsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+}
+
+// ===================== HLS URL helpers =====================
+
+data class HlsParts(
+    val domain: String,    // fcxmb.com / hscow.com
+    val path: String,      // hls_mps, or hls for older titles
+    val hash: String,
+    val indexFile: String, // index_266.m3u8 (preview suffix removed)
+)
+
+object CastleHls {
+    private val hlsRegex = Regex(
+        """https://img\d*\.([^/]+)/(hls_mps|hls)/([a-f0-9]+)/[^/]+/(index(?:_preview)?_\d+\.m3u8)"""
+    )
+
+    /** Parse domain, path, hash and full index file from any Castle HLS URL (preview or full). */
+    fun parse(videoUrl: String): HlsParts? {
+        val m = hlsRegex.find(videoUrl) ?: return null
+        return HlsParts(
+            domain = m.groupValues[1],
+            path = m.groupValues[2],
+            hash = m.groupValues[3],
+            indexFile = m.groupValues[4].replace("index_preview_", "index_"),
+        )
+    }
+
+    /** Full (non-preview) playlist for a quality folder, on the unsigned img.{domain} host (img1 returns 403 without a signature). */
+    fun qualityUrl(p: HlsParts, quality: Int): String =
+        "https://img.${p.domain}/${p.path}/${p.hash}/$quality/${p.indexFile}"
+}
+
+// ===================== getVideo2 request body =====================
+
+object CastleVideoRequest {
+    fun body(movieId: String, episodeId: String, resolution: Int, languageId: Int?): Map<String, String> {
+        val body = linkedMapOf(
+            "mode" to "1",
+            "appMarket" to "GuanWang",
+            "clientType" to "1",
+            "woolUser" to "false",
+            "apkSignKey" to "ED0955EB04E67A1D9F3305B95454FED485261475",
+            "androidVersion" to "13",
+            "movieId" to movieId,
+            "episodeId" to episodeId,
+            "isNewUser" to "true",
+            "resolution" to resolution.toString(),
+            "packageName" to "com.external.castle",
+        )
+        if (languageId != null) body["languageId"] = languageId.toString()
+        return body
     }
 }
