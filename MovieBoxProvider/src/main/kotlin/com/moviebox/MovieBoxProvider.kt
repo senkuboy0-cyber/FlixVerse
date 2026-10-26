@@ -317,8 +317,9 @@ class MovieBoxProvider : MainAPI() {
                 callback.invoke(newExtractorLink(name, "$name $language DASH", url, ExtractorLinkType.DASH) {
                     this.headers = buildMap {
                         put("User-Agent", MovieBoxWeb.BROWSER_UA)
-                        put("Referer", "${MovieBoxWeb.SITE}/")
-                        put("Origin", MovieBoxWeb.SITE)
+                        // sbcdnw only accepts movie-box.co / movieboxhd.net as Referer (others give 429)
+                        put("Referer", "https://movie-box.co/")
+                        put("Accept", "*/*")
                         if (cookie.isNotBlank()) {
                             put("Cookie", cookie)
                             put("X-MB-Token", cookie)
