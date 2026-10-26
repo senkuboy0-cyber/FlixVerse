@@ -35,67 +35,6 @@ class CastleTvProvider : MainAPI() {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    // ------------------------------------------------------------------ TMDB
-    // Castle titles are already clean, so they are searched as they are.
-    // The result whose release year matches the Castle year is taken
-    // (exact year first, then one year either side, then the first result).
-    // Only the backdrop and the title logo are used from TMDB.
-    private val tmdbApi = "https://api.themoviedb.org/3"
-    private val tmdbKey = "1865f43a0549ca50d341dd9ab8b29f49"
-    private val tmdbImg = "https://image.tmdb.org/t/p/original"
-
-    data class TmdbSearchResponse(val results: List<TmdbSearchItem>? = null)
-
-    data class TmdbSearchItem(
-        val id: Int? = null,
-        @com.fasterxml.jackson.annotation.JsonProperty("release_date") val releaseDate: String? = null,
-        @com.fasterxml.jackson.annotation.JsonProperty("first_air_date") val firstAirDate: String? = null,
-    )
-
-    data class TmdbImagesResponse(
-        val logos: List<TmdbImageItem>? = null,
-        val backdrops: List<TmdbImageItem>? = null,
-    )
-
-    data class TmdbImageItem(
-        @com.fasterxml.jackson.annotation.JsonProperty("file_path") val filePath: String? = null,
-        @com.fasterxml.jackson.annotation.JsonProperty("iso_639_1") val iso6391: String? = null,
-    )
-
-    private suspend fun tmdbArtwork(title: String, year: Int?, isMovie: Boolean): Pair<String?, String?> {
-        val kind = if (isMovie) "movie" else "tv"
-        return try {
-            val query = java.net.URLEncoder.encode(title, "UTF-8")
-            val results = mapper.readValue<TmdbSearchResponse>(
-                app.get("$tmdbApi/search/$kind?api_key=$tmdbKey&query=$query").text
-            ).results.orEmpty().filter { it.id != null }
-            if (results.isEmpty()) return null to null
-
-            fun yearOf(item: TmdbSearchItem): Int? =
-                (item.releaseDate ?: item.firstAirDate)?.take(4)?.toIntOrNull()
-
-            val match = year?.let { y ->
-                results.firstOrNull { yearOf(it) == y }
-                    ?: results.firstOrNull { yearOf(it)?.let { r -> kotlin.math.abs(r - y) <= 1 } == true }
-            } ?: results.first()
-
-            val images = mapper.readValue<TmdbImagesResponse>(
-                app.get("$tmdbApi/$kind/${match.id}/images?api_key=$tmdbKey&include_image_language=en,hi,null").text
-            )
-            // Textless backdrop first
-            val backdrop = images.backdrops?.let { b ->
-                (b.firstOrNull { it.iso6391 == null } ?: b.firstOrNull())?.filePath
-            }?.let { "$tmdbImg$it" }
-            // English logo, then Hindi, then any
-            val logo = images.logos?.let { l ->
-                (l.firstOrNull { it.iso6391 == "en" } ?: l.firstOrNull { it.iso6391 == "hi" } ?: l.firstOrNull())?.filePath
-            }?.let { "$tmdbImg$it" }
-            backdrop to logo
-        } catch (e: Exception) {
-            null to null
-        }
-    }
-
     // Data classes for API responses
     data class CastleApiResponse(
         val code: Int,
@@ -365,63 +304,55 @@ class CastleTvProvider : MainAPI() {
     }
 
     override val mainPage = mainPageOf(
-        "1" to "Home"
+        *CastleCategories.list.map { CastleCategories.key(it) to it.name }.toTypedArray()
     )
+
+    /** Fetch one page of a Castle tab (home API with locationId) and decrypt it. */
+    private suspend fun fetchTabPage(locationId: Int, page: Int, securityKey: String): HomePageData? {
+        val url = "$mainUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=$locationId&mode=1&packageName=com.external.castle&page=$page&size=17"
+        val response = app.get(url)
+        val encryptedData = try {
+            mapper.readValue<CastleApiResponse>(response.text).data
+        } catch (e: Exception) {
+            response.text
+        }
+        if (encryptedData.isNullOrBlank()) return null
+        val decryptedJson = decryptData(encryptedData, securityKey) ?: return null
+        return mapper.readValue<DecryptedResponse>(decryptedJson).data
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         return try {
+            // Each category is a whole row, so there is only one page
+            if (page > 1) return newHomePageResponse(emptyList(), false)
             val securityKey = getSecurityKey() ?: return newHomePageResponse(emptyList())
-            val url = "$mainUrl/film-api/v0.1/category/home?channel=IndiaA&clientType=1&clientType=1&lang=en-US&locationId=1001&mode=1&packageName=com.external.castle&page=$page&size=17"
-            val response = app.get(url)
-            val apiResponse = try {
-                mapper.readValue<CastleApiResponse>(response.text)
-            } catch (e: Exception) {
-                CastleApiResponse(200, "OK", response.text)
-            }           
-            val encryptedData = apiResponse.data            
-            if (encryptedData.isNullOrBlank()) {
-                return newHomePageResponse(emptyList())
-            }           
-            val decryptedJson = decryptData(encryptedData, securityKey)
-            
-            if (decryptedJson == null) {
-                return newHomePageResponse(emptyList())
+            val locationId = request.data.substringBefore("|").toInt()
+            val rowId = request.data.substringAfter("|").toLong()
+
+            // The row can sit on any page of its tab
+            var row: HomePageRow? = null
+            var tabPage = 1
+            while (row == null && tabPage <= 5) {
+                val data = fetchTabPage(locationId, tabPage, securityKey) ?: break
+                row = data.rows?.firstOrNull { it.id == rowId }
+                if (tabPage >= (data.pages ?: 1)) break
+                tabPage++
             }
-                       
-            val decryptedResponse = mapper.readValue<DecryptedResponse>(decryptedJson)
-            val homePageData = decryptedResponse.data
-            
-            val homePageLists = homePageData.rows?.mapNotNull { row ->
-                val rowName = row.name ?: "Unknown Category"
-                val contents = row.contents?.mapNotNull { content ->
-                    val title = content.title ?: return@mapNotNull null
-                    val id = content.redirectId?.toString() ?: return@mapNotNull null
-                    val coverImg = content.coverImage
-                    // movieType: 1=TvSeries, 2=Movie, 3=Reality Shows, 5=Anime
-                    val type = when (content.movieType) {
-                        1, 3, 5 -> TvType.TvSeries // Series, Reality Shows, Anime
-                        2 -> TvType.Movie
-                        else -> TvType.Movie
-                    }
-                    
-                    newMovieSearchResponse(
-                        name = title,
-                        url = id,
-                        type = type
-                    ) {
-                        posterUrl = coverImg
-                    }
-                } ?: emptyList()
-                
-                if (contents.isNotEmpty() && rowName != "Hot Erotic Series" && rowName != "Bollywood Star") {
-                    HomePageList(rowName, contents)
-                } else {
-                    null
+
+            val contents = row?.contents?.mapNotNull { content ->
+                val title = content.title ?: return@mapNotNull null
+                val id = content.redirectId?.toString() ?: return@mapNotNull null
+                // movieType: 1=TvSeries, 2=Movie, 3=Reality Shows, 5=Anime
+                val type = when (content.movieType) {
+                    1, 3, 5 -> TvType.TvSeries
+                    else -> TvType.Movie
                 }
-            } ?: emptyList()
-            
-            newHomePageResponse(homePageLists)
-            
+                newMovieSearchResponse(name = title, url = id, type = type) {
+                    posterUrl = content.coverImage
+                }
+            }.orEmpty()
+
+            newHomePageResponse(HomePageList(request.name, contents), false)
         } catch (e: Exception) {
             newHomePageResponse(emptyList())
         }
@@ -520,7 +451,7 @@ class CastleTvProvider : MainAPI() {
                                (details.episodes?.size ?: 0) > 1
 
             // TMDB backdrop and title logo; Castle's horizontal cover stays as the fallback background
-            val (tmdbBackdrop, tmdbLogo) = tmdbArtwork(title, year, !isSeriesLike)
+            val (tmdbBackdrop, tmdbLogo) = CastleTmdb.artwork(title, year, !isSeriesLike)
             val background = tmdbBackdrop ?: backgroundPosterUrl
             
             when {
