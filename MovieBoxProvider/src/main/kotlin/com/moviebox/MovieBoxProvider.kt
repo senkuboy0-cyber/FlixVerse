@@ -39,14 +39,24 @@ class MovieBoxProvider : MainAPI() {
     override var lang = "hi"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
-    override val mainPage = mainPageOf(*MovieBoxCategories.list.toTypedArray())
+    override val mainPage = mainPageOf(*MovieBoxSections.mainPage().toTypedArray())
 
     // ---------------- Home ----------------
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val (tabId, category) = request.data.split("|")
-        val data = MovieBoxApi.rankingList(tabId, category, page)
-        val items = (data?.get("subjects") ?: data?.get("items"))?.mapNotNull { it.toSearch() } ?: emptyList()
-        val hasMore = data?.get("pager")?.get("hasMore")?.asBoolean() ?: false
+        val parts = request.data.split("|")
+        // "r|tab|id" = ranking-list, "g|tab|id" = genre-top (old saved form "tab|id" = ranking-list)
+        val (kind, tabId, category) = if (parts.size == 3) Triple(parts[0], parts[1], parts[2]) else Triple("r", parts[0], parts[1])
+        val items: List<SearchResponse>
+        val hasMore: Boolean
+        if (kind == "g") {
+            val data = MovieBoxApi.genreTop(category, page)
+            items = data?.get("list")?.mapNotNull { (it["info"] ?: it).toSearch() } ?: emptyList()
+            hasMore = data?.get("pager")?.get("hasMore")?.asBoolean() ?: false
+        } else {
+            val data = MovieBoxApi.rankingList(tabId, category, page)
+            items = (data?.get("subjects") ?: data?.get("items"))?.mapNotNull { it.toSearch() } ?: emptyList()
+            hasMore = data?.get("pager")?.get("hasMore")?.asBoolean() ?: false
+        }
         return newHomePageResponse(HomePageList(request.name, items), hasMore)
     }
 

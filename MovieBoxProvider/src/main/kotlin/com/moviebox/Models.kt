@@ -15,25 +15,6 @@ import java.util.Locale
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-// ===================== Category list (home page) =====================
-// data = "tabId|categoryType" for /wefeed-mobile-bff/tab/ranking-list
-object MovieBoxCategories {
-    val list = listOf(
-        "0|1488104699998914056" to "New Movies",
-        "5|6768518077748858592" to "New Series",
-        "5|1976033493293449744" to "Asian Drama",
-        "5|4903182713986896328" to "Indian Drama",
-        "0|414907768299210008" to "Bollywood",
-        "0|3859721901924910512" to "South Indian",
-        "0|8019599703232971616" to "Hollywood",
-        "8|536501058407990248" to "Animated Film",
-        "18|7878715743607948784" to "K-Drama",
-        "18|8788126208987989488" to "C-Drama",
-        "5|8223396272405987416" to "Bengali Series",
-        "20|7686549674215833952" to "Bengali-Dubbed",
-    )
-}
-
 // ===================== API client =====================
 object MovieBoxApi {
     val HOST_POOL = listOf(
@@ -171,6 +152,9 @@ object MovieBoxApi {
     // ---------- endpoints ----------
     suspend fun rankingList(tabId: String, category: String, page: Int, perPage: Int = 20) =
         get("$BFF/tab/ranking-list?tabId=$tabId&categoryType=$category&page=$page&perPage=$perPage")
+
+    suspend fun genreTop(type: String, page: Int, perPage: Int = 20) =
+        post("$BFF/subject-api/genre-top", mapOf("type" to type, "page" to page, "perPage" to perPage))
 
     suspend fun search(keyword: String, page: Int) =
         post("$BFF/subject-api/search/v2", mapOf("page" to page, "perPage" to 20, "keyword" to keyword))
