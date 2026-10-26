@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 32
+version = 33
 
 android {
     // Root build sets namespace "com.anime"; override so BuildConfig is generated in com.castletv
