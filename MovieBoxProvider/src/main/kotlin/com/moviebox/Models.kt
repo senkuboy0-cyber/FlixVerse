@@ -90,7 +90,7 @@ object MovieBoxApi {
     private fun headers(method: String, url: String, body: String?, token: String?): Map<String, String> {
         val contentType = if (body != null) "application/json; charset=utf-8" else "application/json"
         val h = mutableMapOf(
-            "user-agent" to "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ3A.230901.001; Cronet/145.0.7582.0)",
+            "user-agent" to APP_USER_AGENT,
             "accept" to "application/json",
             "content-type" to contentType,
             "x-client-token" to clientToken(),
@@ -270,3 +270,6 @@ object Cinemeta {
         } catch (_: Exception) { emptyMap() }
     }
 }
+
+// CDN rejects browser User-Agents (428) and any Referer (429); players must send this UA.
+const val APP_USER_AGENT = "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
