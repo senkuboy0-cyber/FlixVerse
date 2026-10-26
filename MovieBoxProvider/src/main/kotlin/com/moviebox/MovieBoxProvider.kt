@@ -215,7 +215,7 @@ class MovieBoxProvider : MainAPI() {
                     if (quality != null && quality > 0) this.quality = quality
                 })
             }
-            fun sendSubs(list: JsonNode?) {
+            suspend fun sendSubs(list: JsonNode?) {
                 list?.forEach { c ->
                     val url = c["url"]?.asText() ?: return@forEach
                     if (!seenSubs.add(url.substringBefore("?"))) return@forEach
