@@ -208,10 +208,8 @@ class MovieBoxProvider : MainAPI() {
                 if (!seenLinks.add("$language|$key")) return
                 found = true
                 callback.invoke(newExtractorLink(name, linkName, url, type) {
-                    this.headers = buildMap {
-                        put("Referer", mainUrl)
-                        if (!cookie.isNullOrBlank()) put("Cookie", cookie)
-                    }
+                    // No Referer: the CDN answers 429 when a Referer header is sent
+                    if (!cookie.isNullOrBlank()) this.headers = mapOf("Cookie" to cookie)
                     if (quality != null && quality > 0) this.quality = quality
                 })
             }
