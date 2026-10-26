@@ -367,7 +367,9 @@ object MovieBoxUtils {
     fun bracketLanguage(title: String?): String? =
         title?.let { Regex("""\[([^\]]+)]""").find(it)?.groupValues?.get(1)?.trim() }?.takeIf { it.isNotBlank() }
 
-    fun cleanTitle(title: String): String = title.substringBefore("[").trim().ifBlank { title }
+    /** Search-only title: drops every [..] and (..) part, e.g. "Chained Soldier [Hindi]" / "(Hindi)" -> "Chained Soldier". */
+    fun cleanTitle(title: String): String =
+        title.replace(Regex("""\[[^\]]*]|\([^)]*\)"""), " ").replace(Regex("""\s+"""), " ").trim().ifBlank { title }
 
     fun durationMinutes(duration: String?, seconds: Int?): Int? {
         duration?.let { d ->
@@ -379,7 +381,59 @@ object MovieBoxUtils {
     }
 }
 
-// ===================== Episode metadata (Cinemeta, no TMDB) =====================
+// ===================== TMDB =====================
+/**
+ * Backdrop and title logo from TMDB, same rules as CastleTmdb:
+ * search the cleaned title (only for searching; the app keeps the real title),
+ * series in TMDB tv, movies in TMDB movie.
+ * Only a result whose name is exactly the cleaned title (case ignored) is accepted.
+ * Among those, the release year must match (exact, then one year either side);
+ * if no year fits but there is just one exact-name result, that one is used.
+ * No exact-name result means nothing is taken from TMDB.
+ */
+object MovieBoxTmdb {
+    private const val API = "https://api.themoviedb.org/3"
+    private const val KEY = "1865f43a0549ca50d341dd9ab8b29f49"
+    private const val IMG = "https://image.tmdb.org/t/p/original"
+
+    private fun norm(s: String?) = s?.trim()?.replace(Regex("\\s+"), " ")?.lowercase()
+
+    suspend fun artwork(rawTitle: String, year: Int?, isMovie: Boolean): Pair<String?, String?> {
+        val title = MovieBoxUtils.cleanTitle(rawTitle)
+        val kind = if (isMovie) "movie" else "tv"
+        return try {
+            val t = norm(title)
+            fun JsonNode.year() = (this["release_date"] ?: this["first_air_date"])?.asText()?.take(4)?.toIntOrNull()
+            val exact = MovieBoxApi.mapper.readTree(
+                app.get("$API/search/$kind?api_key=$KEY&query=${Uri.encode(title)}").text
+            )["results"]?.filter { r ->
+                r["id"]?.asInt() != null &&
+                    listOf("title", "name", "original_title", "original_name").any { norm(r[it]?.asText()) == t }
+            }.orEmpty()
+            if (exact.isEmpty()) return null to null
+
+            val match = year?.let { y ->
+                exact.firstOrNull { it.year() == y }
+                    ?: exact.firstOrNull { it.year()?.let { r -> kotlin.math.abs(r - y) <= 1 } == true }
+            } ?: exact.singleOrNull() ?: return null to null
+
+            val images = MovieBoxApi.mapper.readTree(
+                app.get("$API/$kind/${match["id"].asInt()}/images?api_key=$KEY&include_image_language=en,hi,null").text
+            )
+            fun JsonNode.path() = this["file_path"]?.asText()?.takeIf { it.isNotBlank() && !it.endsWith(".svg", true) }
+            fun JsonNode.lang() = this["iso_639_1"]?.takeIf { !it.isNull }?.asText()
+            fun pick(list: JsonNode?, order: List<String?>): String? {
+                val items = list?.filter { it.path() != null }.orEmpty()
+                return (order.firstNotNullOfOrNull { l -> items.firstOrNull { it.lang() == l } } ?: items.firstOrNull())
+                    ?.path()?.let { "$IMG$it" }
+            }
+            // Backdrop: no language, then English, then any. Logo: English, then no language, then any. Never svg.
+            pick(images["backdrops"], listOf(null, "en")) to pick(images["logos"], listOf("en", null))
+        } catch (_: Exception) { null to null }
+    }
+}
+
+// ===================== Episode metadata (Cinemeta) =====================
 data class EpisodeMeta(val title: String?, val description: String?, val thumbnail: String?, val aired: String?)
 
 object Cinemeta {

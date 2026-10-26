@@ -90,11 +90,16 @@ class MovieBoxProvider : MainAPI() {
         data["dubs"]?.forEach { d -> d["subjectId"]?.asText()?.let { related.add(it) } }
         val recs = recommendations(id, related)
 
+        // TMDB backdrop and title logo (searched with the cleaned title); MovieBox cover stays as the fallback background
+        val (tmdbBackdrop, tmdbLogo) = MovieBoxTmdb.artwork(title, year, type != TvType.TvSeries)
+        val background = tmdbBackdrop ?: poster
+
         if (type == TvType.TvSeries) {
             val episodes = buildEpisodes(id, title, year, poster)
             return newTvSeriesLoadResponse(title, id, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster
+                this.backgroundPosterUrl = background
+                this.logoUrl = tmdbLogo
                 this.plot = plot
                 this.year = year
                 this.score = rating
@@ -104,7 +109,8 @@ class MovieBoxProvider : MainAPI() {
         }
         return newMovieLoadResponse(title, id, TvType.Movie, "$id|0|0") {
             this.posterUrl = poster
-            this.backgroundPosterUrl = poster
+            this.backgroundPosterUrl = background
+                this.logoUrl = tmdbLogo
             this.plot = plot
             this.year = year
             this.score = rating
