@@ -113,7 +113,9 @@ class ManageSectionsDialog(
         }
         footer.addView(button("Cancel", Color.parseColor("#AAAAAA")) { dismiss() })
         footer.addView(button("Save", accent) {
-            MovieBoxSections.save(state)
+            // Ticked sections first (their order kept), unticked after: a newly ticked one lands right after the last ticked
+            val ordered = state.filter { it.enabled } + state.filter { !it.enabled }
+            MovieBoxSections.save(ordered)
             dismiss()
             onSaved()
         })
@@ -227,7 +229,8 @@ class ManageSectionsDialog(
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
             setSingleLine()
             hint = sec.title
-            setText(st.name ?: "")
+            // Start with the current name so a small edit doesn't need full retyping
+            setText(MovieBoxSections.titleOf(st))
             setSelection(text.length)
         }
         val box = FrameLayout(context).apply {
@@ -239,7 +242,7 @@ class ManageSectionsDialog(
             .setMessage("Empty = default name (${sec.title})")
             .setView(box)
             .setPositiveButton("OK") { _, _ ->
-                st.name = input.text.toString().trim().takeIf { it.isNotEmpty() }
+                st.name = input.text.toString().trim().takeIf { it.isNotEmpty() && it != sec.title }
                 titleView.text = MovieBoxSections.titleOf(st)
             }
             .setNeutralButton("Default") { _, _ ->
