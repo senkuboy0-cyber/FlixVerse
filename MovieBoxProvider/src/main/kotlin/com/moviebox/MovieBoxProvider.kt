@@ -311,8 +311,9 @@ class MovieBoxProvider : MainAPI() {
         }
         appSources.entries.toList().amap { (sid, language) -> tryApp(sid, language) }
 
-        // Website dubs list (adds dubs the app hides); those also go through the app API first.
-        // Website play/download links are only a backup, for a language the app gave nothing for.
+        // Website = backup only: used just when the app API gave no link at all.
+        // Then its dubs list is used (hidden dubs tried via the app API first), and its own links last.
+        if (found) return true
         val webMain = MovieBoxWeb.subject(id)
         val webSources = LinkedHashMap<String, Pair<String, String>>() // sid -> (detailPath, language)
         webMain?.get("dubs")?.forEach { d ->
