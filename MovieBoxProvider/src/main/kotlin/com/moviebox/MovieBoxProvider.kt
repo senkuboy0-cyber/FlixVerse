@@ -302,10 +302,17 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
-        // First the app's own sources, sent to the player as they come
-        appSources.entries.toList().amap { (sid, language) -> appLinks(sid, language) }
+        // Method 1 first: the app API for every language; record which languages gave links
+        val gotLinks = Collections.synchronizedSet(mutableSetOf<String>())
+        suspend fun tryApp(sid: String, language: String) {
+            val before = seenLinks.size
+            appLinks(sid, language)
+            if (seenLinks.size > before) gotLinks.add(sid)
+        }
+        appSources.entries.toList().amap { (sid, language) -> tryApp(sid, language) }
 
-        // Then the website: its full dubs list (adds dubs the app hides) + its own play/download links
+        // Website dubs list (adds dubs the app hides); those also go through the app API first.
+        // Website play/download links are only a backup, for a language the app gave nothing for.
         val webMain = MovieBoxWeb.subject(id)
         val webSources = LinkedHashMap<String, Pair<String, String>>() // sid -> (detailPath, language)
         webMain?.get("dubs")?.forEach { d ->
@@ -318,8 +325,8 @@ class MovieBoxProvider : MainAPI() {
         }
         webSources.entries.toList().amap { (sid, v) ->
             val (path, language) = v
-            if (!appSources.containsKey(sid)) appLinks(sid, language)
-            webLinks(sid, path, language)
+            if (!appSources.containsKey(sid)) tryApp(sid, language)
+            if (sid !in gotLinks) webLinks(sid, path, language)
         }
         return found
     }
