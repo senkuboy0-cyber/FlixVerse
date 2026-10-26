@@ -29,7 +29,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.moviebox.MovieBoxUtils.cleanTitle
 import com.moviebox.MovieBoxUtils.isPlaceholder
 import java.util.Collections
 
@@ -63,7 +62,7 @@ class MovieBoxProvider : MainAPI() {
     private fun JsonNode.toSearch(): SearchResponse? {
         val id = this["subjectId"]?.asText() ?: return null
         val title = this["title"]?.asText() ?: return null
-        return newMovieSearchResponse(cleanTitle(title), id, tvType(this["subjectType"]?.asInt())) {
+        return newMovieSearchResponse(title, id, tvType(this["subjectType"]?.asInt())) {
             posterUrl = this@toSearch["cover"]?.get("url")?.asText()
             score = Score.from10(this@toSearch["imdbRatingValue"]?.asText() ?: this@toSearch["imdbRate"]?.asText())
         }
@@ -79,8 +78,7 @@ class MovieBoxProvider : MainAPI() {
         val id = Regex("""subjectId=([^&]+)""").find(url)?.groupValues?.get(1) ?: url.substringAfterLast('/')
         val data = MovieBoxApi.subject(id) ?: throw ErrorLoadingException("No data")
 
-        val rawTitle = data["title"]?.asText() ?: throw ErrorLoadingException("No title")
-        val title = cleanTitle(rawTitle)
+        val title = data["title"]?.asText() ?: throw ErrorLoadingException("No title")
         val poster = data["cover"]?.get("url")?.asText()
         val plot = data["description"]?.asText()
         val year = data["releaseDate"]?.asText()?.take(4)?.toIntOrNull()
@@ -152,7 +150,7 @@ class MovieBoxProvider : MainAPI() {
                 r["title"]?.asText()?.takeIf { it.isNotBlank() }?.let { mbTitles.putIfAbsent(se to ep, it) }
             }
         }
-        val meta = Cinemeta.episodes(title, year)
+        val meta = Cinemeta.episodes(MovieBoxUtils.cleanTitle(title), year)
 
         val episodes = mutableListOf<Episode>()
         seasons.forEach { s ->
@@ -187,25 +185,40 @@ class MovieBoxProvider : MainAPI() {
 
         val main = MovieBoxApi.subject(id)
         val rawTitle = main?.get("title")?.asText()
-        val sources = mutableListOf<Pair<String, String>>()
-        main?.get("dubs")?.forEach { d ->
-            val sid = d["subjectId"]?.asText() ?: return@forEach
-            val name = MovieBoxUtils.languageName(
-                d["lanName"]?.asText(), d["lanCode"]?.asText(), d["original"]?.asBoolean() == true, rawTitle
-            )
-            if (sources.none { it.first == sid }) sources.add(sid to name)
+        fun label(d: JsonNode) = MovieBoxUtils.languageName(
+            d["lanName"]?.asText(), d["lanCode"]?.asText(), d["original"]?.asBoolean() == true, rawTitle
+        )
+
+        // App sources: the subject itself + its dubs, names as the JSON has them
+        val appSources = LinkedHashMap<String, String>()
+        main?.get("dubs")?.forEach { d -> d["subjectId"]?.asText()?.let { appSources.putIfAbsent(it, label(d)) } }
+        if (!appSources.containsKey(id)) {
+            val own = MovieBoxUtils.bracketLanguage(rawTitle) ?: "Original"
+            val ordered = LinkedHashMap<String, String>().apply { put(id, own); putAll(appSources) }
+            appSources.clear(); appSources.putAll(ordered)
         }
-        if (sources.none { it.first == id }) sources.add(0, id to (MovieBoxUtils.bracketLanguage(rawTitle) ?: "Original"))
 
         val seenLinks = Collections.synchronizedSet(mutableSetOf<String>())
         val seenSubs = Collections.synchronizedSet(mutableSetOf<String>())
         var found = false
 
-        sources.amap { (sid, language) ->
+        /** Same file can come from bcdn and bcdnxw: key on the path only. */
+        fun fileKey(url: String) = url.substringBefore("?").substringAfter("hakunaymatata.com").substringAfter("aoneroom.com")
+
+        suspend fun sendSubs(list: JsonNode?) {
+            list?.forEach { c ->
+                val url = c["url"]?.asText() ?: return@forEach
+                if (!seenSubs.add(url.substringBefore("?"))) return@forEach
+                val lang = c["lanName"]?.asText() ?: c["language"]?.asText() ?: c["lan"]?.asText() ?: "Unknown"
+                subtitleCallback.invoke(newSubtitleFile(lang, url))
+            }
+        }
+
+        // ---------- Method 1: app API ----------
+        suspend fun appLinks(sid: String, language: String) {
             val linkName = "$name $language"
             suspend fun send(url: String, quality: Int?, type: ExtractorLinkType?, cookie: String? = null) {
-                val key = url.substringBefore("?")
-                if (!seenLinks.add("$language|$key")) return
+                if (!seenLinks.add("$language|${fileKey(url)}")) return
                 found = true
                 callback.invoke(newExtractorLink(name, linkName, url, type) {
                     // CDN: no Referer (429) and a non-browser User-Agent (browser UA gives 428)
@@ -216,14 +229,6 @@ class MovieBoxProvider : MainAPI() {
                     if (quality != null && quality > 0) this.quality = quality
                 })
             }
-            suspend fun sendSubs(list: JsonNode?) {
-                list?.forEach { c ->
-                    val url = c["url"]?.asText() ?: return@forEach
-                    if (!seenSubs.add(url.substringBefore("?"))) return@forEach
-                    val lang = c["lanName"]?.asText() ?: c["language"]?.asText() ?: c["lan"]?.asText() ?: "Unknown"
-                    subtitleCallback.invoke(newSubtitleFile(lang, url))
-                }
-            }
             val resourceIds = Collections.synchronizedList(mutableListOf<String>())
 
             // 1) play-info streams (MP4 / HLS / DASH with signed cookie)
@@ -231,15 +236,8 @@ class MovieBoxProvider : MainAPI() {
             play?.get("streams")?.forEach { s ->
                 val url = s["url"]?.asText()
                 if (isPlaceholder(url, s["duration"]?.asInt())) return@forEach
-                val format = s["format"]?.asText().orEmpty()
-                val type = when {
-                    url!!.contains(".mpd", true) || format.equals("DASH", true) -> ExtractorLinkType.DASH
-                    url.contains(".m3u8", true) || format.equals("HLS", true) -> ExtractorLinkType.M3U8
-                    url.contains(".mp4", true) || url.contains(".mkv", true) -> ExtractorLinkType.VIDEO
-                    else -> INFER_TYPE
-                }
                 val q = s["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
-                send(url, q, type, s["signCookie"]?.asText())
+                send(url!!, q, linkType(url, s["format"]?.asText()), s["signCookie"]?.asText())
                 s["id"]?.asText()?.let { sendSubs(MovieBoxApi.streamCaptions(sid, it)?.get("extCaptions")) }
             }
 
@@ -276,7 +274,61 @@ class MovieBoxProvider : MainAPI() {
                 sendSubs(MovieBoxApi.extCaptions(sid, rid, episode)?.get("extCaptions"))
             }
         }
+
+        // ---------- Method 2: website API ----------
+        suspend fun webLinks(sid: String, detailPath: String, language: String) {
+            val linkName = "$name $language"
+            MovieBoxWeb.media(sid, detailPath, season, episode).forEach { data ->
+                sendSubs(data["captions"])
+                val items = listOf("streams", "hls", "dash", "downloads").flatMap { data[it]?.toList() ?: emptyList() }
+                items.forEach { s ->
+                    val url = s["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
+                    if (isPlaceholder(url, s["duration"]?.asInt())) return@forEach
+                    if (!seenLinks.add("$language|${fileKey(url)}")) return@forEach
+                    val q = s["resolution"]?.asInt()?.takeIf { it > 0 }
+                        ?: s["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+                    found = true
+                    callback.invoke(newExtractorLink(name, linkName, url, linkType(url, s["format"]?.asText())) {
+                        // Website CDN (bcdnxw) plays only from the site: browser UA + site Referer
+                        this.headers = buildMap {
+                            put("User-Agent", MovieBoxWeb.BROWSER_UA)
+                            put("Referer", "${MovieBoxWeb.SITE}/")
+                            put("Origin", MovieBoxWeb.SITE)
+                            s["signCookie"]?.asText()?.takeIf { it.isNotBlank() }?.let { put("Cookie", it) }
+                        }
+                        if (q != null) this.quality = q
+                    })
+                }
+            }
+        }
+
+        // First the app's own sources, sent to the player as they come
+        appSources.entries.toList().amap { (sid, language) -> appLinks(sid, language) }
+
+        // Then the website: its full dubs list (adds dubs the app hides) + its own play/download links
+        val webMain = MovieBoxWeb.subject(id)
+        val webSources = LinkedHashMap<String, Pair<String, String>>() // sid -> (detailPath, language)
+        webMain?.get("dubs")?.forEach { d ->
+            val sid = d["subjectId"]?.asText() ?: return@forEach
+            val path = d["detailPath"]?.asText() ?: return@forEach
+            webSources.putIfAbsent(sid, path to (appSources[sid] ?: label(d)))
+        }
+        if (!webSources.containsKey(id)) webMain?.get("detailPath")?.asText()?.let { path ->
+            webSources[id] = path to (appSources[id] ?: MovieBoxUtils.bracketLanguage(rawTitle) ?: "Original")
+        }
+        webSources.entries.toList().amap { (sid, v) ->
+            val (path, language) = v
+            if (!appSources.containsKey(sid)) appLinks(sid, language)
+            webLinks(sid, path, language)
+        }
         return found
+    }
+
+    private fun linkType(url: String, format: String?): ExtractorLinkType? = when {
+        url.contains(".mpd", true) || format.equals("DASH", true) -> ExtractorLinkType.DASH
+        url.contains(".m3u8", true) || format.equals("HLS", true) -> ExtractorLinkType.M3U8
+        url.contains(".mp4", true) || url.contains(".mkv", true) -> ExtractorLinkType.VIDEO
+        else -> INFER_TYPE
     }
 
     /** Anti-piracy bypass: resource-position returns the real signed mp4. */

@@ -197,6 +197,50 @@ object MovieBoxApi {
         post("$BFF/subject-api/$kind", mapOf("subjectId" to id, "page" to 1, "perPage" to 12))
 }
 
+// ===================== Website API (h5) =====================
+// Same catalog as the app; detail lists every dub (the app hides some by region).
+object MovieBoxWeb {
+    private const val API = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
+    private val OLD_HOSTS = listOf("https://fmoviesunblocked.net", "https://h5.aoneroom.com")
+    const val SITE = "https://fmoviesunblocked.net"
+    const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36"
+
+    /** Referer the site's own player page sends; without it play/download say hasResource=false. */
+    fun playPage(sid: String, detailPath: String) =
+        "$SITE/spa/videoPlayPage/movies/$detailPath?id=$sid&type=/movie/detail"
+
+    private suspend fun getJson(url: String, referer: String): JsonNode? = try {
+        val res = app.get(url, headers = mapOf(
+            "User-Agent" to BROWSER_UA,
+            "Accept" to "application/json",
+            "Referer" to referer,
+            "Origin" to SITE,
+            "X-Client-Info" to "{\"timezone\":\"Asia/Dhaka\"}",
+        ))
+        MovieBoxApi.mapper.readTree(res.text)?.takeIf { it["code"]?.asInt() == 0 }?.get("data")
+    } catch (_: Exception) { null }
+
+    /** subject (with dubs: subjectId, lanName, lanCode, original, type, detailPath) */
+    suspend fun subject(id: String): JsonNode? = getJson("$API/detail?subjectId=$id", "$SITE/")?.get("subject")
+
+    /** play + download responses for one episode (streams/hls/dash/downloads/captions). */
+    suspend fun media(sid: String, detailPath: String, se: Int, ep: Int): List<JsonNode> {
+        val ref = playPage(sid, detailPath)
+        val q = "subjectId=$sid&se=$se&ep=$ep&detailPath=$detailPath"
+        val out = listOfNotNull(getJson("$API/subject/play?$q", ref), getJson("$API/subject/download?$q", ref))
+            .filter { it["hasResource"]?.asBoolean() != false }
+        if (out.isNotEmpty()) return out
+        for (host in OLD_HOSTS) {
+            val old = listOfNotNull(
+                getJson("$host/wefeed-h5-bff/web/subject/play?subjectId=$sid&se=$se&ep=$ep", ref),
+                getJson("$host/wefeed-h5-bff/web/subject/download?subjectId=$sid&se=$se&ep=$ep", ref),
+            ).filter { it["hasResource"]?.asBoolean() != false }
+            if (old.isNotEmpty()) return old
+        }
+        return emptyList()
+    }
+}
+
 // ===================== Helpers =====================
 object MovieBoxUtils {
     /** 23-second "Update now" clip the API returns instead of the real video. */
@@ -206,20 +250,16 @@ object MovieBoxUtils {
 
     private val special = mapOf("esla" to "Spanish (LA)", "ptbr" to "Portuguese (BR)")
 
-    /** "Hindi dub" -> Hindi, "Original Audio" (ja) -> Japanese, "English sub" -> English Sub */
+    /** lanName exactly as the JSON has it ("English dub", "Arabic sub"); original audio -> "Japanese (Original)". */
     fun languageName(lanName: String?, lanCode: String?, original: Boolean, title: String?): String {
         val code = lanCode?.trim()?.lowercase().orEmpty()
         if (original || lanName.isNullOrBlank() || lanName.startsWith("Original", true)) {
-            special[code]?.let { return it }
-            val fromCode = if (code.isNotBlank()) Locale(code).getDisplayLanguage(Locale.ENGLISH) else ""
-            if (fromCode.isNotBlank() && !fromCode.equals(code, true)) return fromCode
-            return bracketLanguage(title) ?: "Original"
+            val fromCode = special[code]
+                ?: if (code.isNotBlank()) Locale(code).getDisplayLanguage(Locale.ENGLISH).takeIf { !it.equals(code, true) } else null
+            if (!fromCode.isNullOrBlank()) return "$fromCode (Original)"
+            return lanName?.takeIf { it.isNotBlank() } ?: bracketLanguage(title) ?: "Original"
         }
-        var name = lanName.trim()
-        if (name.endsWith(" dub", true)) name = name.dropLast(4).trim()
-        if (name.endsWith(" sub", true)) name = name.dropLast(4).trim() + " Sub"
-        special[name.lowercase()]?.let { return it }
-        return name.replaceFirstChar { it.uppercase() }
+        return lanName.trim()
     }
 
     fun bracketLanguage(title: String?): String? =
