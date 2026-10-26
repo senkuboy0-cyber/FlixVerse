@@ -268,11 +268,18 @@ class CastleTvProvider : MainAPI() {
 
     // ===================== Links =====================
 
-    /** False for 403/404/empty, so a quality missing on the CDN (e.g. 1080) is never added. */
+    /**
+     * False for 403/404, so a quality missing on the CDN is never added.
+     * Only the first bytes are requested; the CDN answers a missing file with an XML error.
+     */
     private suspend fun isPlayableM3u8(url: String): Boolean {
         return try {
-            val res = app.get(url, headers = linkHeaders, timeout = 12L)
-            res.code == 200 && res.text.startsWith("#EXTM3U") && res.text.contains("#EXTINF")
+            val res = app.get(
+                url,
+                headers = linkHeaders + mapOf("Range" to "bytes=0-511", "Accept-Encoding" to "identity"),
+                timeout = 12L,
+            )
+            (res.code == 200 || res.code == 206) && !res.text.trimStart().startsWith("<")
         } catch (_: Exception) {
             false
         }
@@ -376,8 +383,7 @@ class CastleTvProvider : MainAPI() {
                 // Expand to full 1080/720/480, only the ones that exist on the CDN
                 for (q in listOf(1080, 720, 480)) {
                     if (!seen.add("${parts.hash}|$q")) continue
-                    val url = CastleHls.qualityUrl(parts, q)
-                    if (!isPlayableM3u8(url)) continue
+                    val url = CastleHls.qualityUrls(parts, q).firstOrNull { isPlayableM3u8(it) } ?: continue
                     callback.invoke(
                         newExtractorLink(source = name, name = "$name $label [${q}p]", url = url, type = ExtractorLinkType.M3U8) {
                             this.headers = linkHeaders
