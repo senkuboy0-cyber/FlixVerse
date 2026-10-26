@@ -29,8 +29,8 @@ object MovieBoxCategories {
         "8|536501058407990248" to "Animated Film",
         "18|7878715743607948784" to "K-Drama",
         "18|8788126208987989488" to "C-Drama",
-        "5|8223396272405987416" to "New Release Bengali Series",
-        "20|7686549674215833952" to "Bengali-Dubbed Indian Drama",
+        "5|8223396272405987416" to "Bengali Series",
+        "20|7686549674215833952" to "Bengali-Dubbed",
     )
 }
 
