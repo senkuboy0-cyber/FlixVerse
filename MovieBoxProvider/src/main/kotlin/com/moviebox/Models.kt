@@ -384,7 +384,7 @@ object MovieBoxUtils {
 // ===================== TMDB =====================
 /**
  * Backdrop and title logo from TMDB, same rules as CastleTmdb:
- * search the cleaned title (only for searching; the app keeps the real title),
+ * search the cleaned title (only for searching; the app keeps the real title), name + year first, then name only,
  * series in TMDB tv, movies in TMDB movie.
  * Only a result whose name is exactly the cleaned title (case ignored) is accepted.
  * Among those, the release year must match (exact, then one year either side);
@@ -404,12 +404,17 @@ object MovieBoxTmdb {
         return try {
             val t = norm(title)
             fun JsonNode.year() = (this["release_date"] ?: this["first_air_date"])?.asText()?.take(4)?.toIntOrNull()
-            val exact = MovieBoxApi.mapper.readTree(
-                app.get("$API/search/$kind?api_key=$KEY&query=${Uri.encode(title)}").text
+            // Exact-name results of one search; name is always matched, with or without the year
+            suspend fun exactResults(extra: String) = MovieBoxApi.mapper.readTree(
+                app.get("$API/search/$kind?api_key=$KEY&query=${Uri.encode(title)}$extra").text
             )["results"]?.filter { r ->
                 r["id"]?.asInt() != null &&
                     listOf("title", "name", "original_title", "original_name").any { norm(r[it]?.asText()) == t }
             }.orEmpty()
+            // Name + year first, then name only
+            val yearParam = if (isMovie) "primary_release_year" else "first_air_date_year"
+            val exact = (year?.let { exactResults("&$yearParam=$it") }.orEmpty())
+                .ifEmpty { exactResults("") }
             if (exact.isEmpty()) return null to null
 
             val match = year?.let { y ->

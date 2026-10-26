@@ -259,7 +259,7 @@ data class TmdbImageItem(
 
 /**
  * Backdrop and title logo from TMDB.
- * Castle titles are already clean, so the title is searched as it is:
+ * Castle titles are already clean, so the title is searched as it is (name + year first, then name only):
  * series in TMDB tv, movies in TMDB movie.
  * Only a result whose name is exactly the Castle title (case ignored) is accepted.
  * Among those, the release year must match (exact, then one year either side);
@@ -289,9 +289,14 @@ object CastleTmdb {
         val kind = if (isMovie) "movie" else "tv"
         return try {
             val query = java.net.URLEncoder.encode(title, "UTF-8")
-            val exact = mapper.readValue<TmdbSearchResponse>(
-                app.get("$API/search/$kind?api_key=$KEY&query=$query").text
+            // Exact-name results of one search; name is always matched, with or without the year
+            suspend fun exactResults(extra: String) = mapper.readValue<TmdbSearchResponse>(
+                app.get("$API/search/$kind?api_key=$KEY&query=$query$extra").text
             ).results.orEmpty().filter { it.id != null && it.sameName(title) }
+            // Name + year first, then name only
+            val yearParam = if (isMovie) "primary_release_year" else "first_air_date_year"
+            val exact = (year?.let { exactResults("&$yearParam=$it") }.orEmpty())
+                .ifEmpty { exactResults("") }
             if (exact.isEmpty()) return null to null
 
             val match = year?.let { y ->

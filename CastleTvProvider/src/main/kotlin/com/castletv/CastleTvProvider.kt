@@ -184,8 +184,6 @@ class CastleTvProvider : MainAPI() {
             val plot = details.briefIntroduction
             val year = yearOf(details.publishTime)
             val rating = details.score?.times(1000)?.toInt() // CloudStream score format
-            val tags = details.tags
-            val actors = details.actors?.map { ActorData(Actor(it.name ?: "", it.avatar)) }
 
             // Series-like content (has multiple episodes) or a movie
             val isSeriesLike = tvTypeOf(details.movieType) == TvType.TvSeries ||
@@ -240,8 +238,6 @@ class CastleTvProvider : MainAPI() {
                     this.plot = plot
                     this.year = year
                     this.score = Score.from(rating, 1000)
-                    this.tags = tags
-                    this.actors = actors
                     this.duration = details.episodes?.firstOrNull()?.duration?.div(60) // seconds to minutes
                     this.showStatus = if (details.seasonDescription?.contains("season", true) == true) {
                         ShowStatus.Ongoing
@@ -263,8 +259,6 @@ class CastleTvProvider : MainAPI() {
                     this.plot = plot
                     this.year = year
                     this.score = Score.from(rating, 1000)
-                    this.tags = tags
-                    this.actors = actors
                     this.duration = episode?.duration?.div(60) // seconds to minutes
                 }
             }
