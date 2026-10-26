@@ -2,14 +2,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/CastleTvProvider.cs3",
         "status": 1,
-        "version": 37,
+        "version": 38,
         "name": "CastleTvProvider",
         "internalName": "CastleTvProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "Castle TV Movies and Series Provider",
-        "fileSize": 84447,
+        "fileSize": 84439,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -18,7 +18,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/CastleTvProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-475adebc6e6621a01ad177204fb9472f2e72b8e881a473ed137ac39807bdcef1"
+        "fileHash": "sha256-76f82a0dfa7ba87c106d62feeb18d5bb5439d8e49f628541dbbd7f20e26c3f7f"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MlsbdProvider.cs3",
@@ -47,14 +47,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MovieBoxProvider.cs3",
         "status": 1,
-        "version": 12,
+        "version": 13,
         "name": "MovieBoxProvider",
         "internalName": "MovieBoxProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "MovieBox Movies and Series (multi-audio)",
-        "fileSize": 91481,
+        "fileSize": 92301,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -63,6 +63,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-3ba1cf00cedcbd48729b2b24dfa590b05870371f490ae8268abfd8835411c092"
+        "fileHash": "sha256-c981922df9d76bbba5bd3f1e2a7bc875064fce94e3d8cbfbb650d39d6cd2ce0a"
     }
 ]
