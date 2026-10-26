@@ -2,7 +2,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/CastleTvProvider.cs3",
         "status": 1,
-        "version": 32,
+        "version": 31,
         "name": "CastleTvProvider",
         "internalName": "CastleTvProvider",
         "authors": [
@@ -18,7 +18,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/CastleTvProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-6d2315264aa7659c85c52c80a479cb21caea4d477bf433bc8a6a8f91cb77a882"
+        "fileHash": "sha256-236cc8b1049388a837b743fb47087201eecd652f2ebfdc14fc7ee759c21f4b78"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MlsbdProvider.cs3",
