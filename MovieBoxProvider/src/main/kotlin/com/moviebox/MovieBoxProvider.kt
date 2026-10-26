@@ -28,6 +28,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.moviebox.MovieBoxUtils.isPlaceholder
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.util.Collections
 
 class MovieBoxProvider : MainAPI() {
@@ -203,7 +205,7 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
-        val gotLinks = Collections.synchronizedSet(mutableSetOf<String>()) // subjectIds the app API gave links for
+        val gotLinks = Collections.synchronizedSet(mutableSetOf<String>()) // subjectIds the app/TV API gave links for
 
         // ---------- Method 1: app API ----------
         suspend fun appLinks(sid: String, language: String) {
@@ -330,13 +332,60 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
-        // Method 1: app API (MP4) + website DASH for the same languages, together
-        appSources.entries.toList().amap { (sid, language) ->
-            tryApp(sid, language)
-            dashLinks(sid, language)
+        // ---------- TV API: DASH, HLS, then its MP4 (another server, kept even if the same file) ----------
+        /** Returns true when the TV API gave a DASH for this language. */
+        suspend fun tvLinks(sid: String, language: String, tv: JsonNode?): Boolean {
+            if (tv == null) return false
+            var gotDash = false
+            fun q(s: JsonNode) = s["resolution"]?.asText()?.filter { it.isDigit() }?.toIntOrNull()?.takeIf { it > 0 }
+                ?: s["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+            suspend fun send(url: String, label: String, type: ExtractorLinkType, quality: Int?, cookie: String?) {
+                if (!seenLinks.add("tv|$language|${fileKey(url)}")) return
+                found = true
+                gotLinks.add(sid)
+                callback.invoke(newExtractorLink(name, label, url, type) {
+                    this.headers = buildMap {
+                        put("User-Agent", MovieBoxTv.UA)
+                        if (!cookie.isNullOrBlank()) put("Cookie", cookie)
+                    }
+                    if (quality != null) this.quality = quality
+                })
+            }
+            val streams = tv["streams"]?.toList() ?: emptyList()
+            fun isHls(s: JsonNode) = s["format"]?.asText().equals("HLS", true) || s["url"]?.asText()?.contains(".m3u8") == true
+            // 1) DASH
+            streams.filter { !isHls(it) && (it["format"]?.asText().equals("DASH", true) || it["url"]?.asText()?.contains(".mpd") == true) }
+                .forEach { s ->
+                    val url = s["url"]?.asText() ?: return@forEach
+                    gotDash = true
+                    send(url, "$name $language DASH", ExtractorLinkType.DASH, q(s), s["signCookie"]?.asText())
+                }
+            // 2) HLS (highest first)
+            streams.filter { isHls(it) }.sortedByDescending { q(it) ?: 0 }.forEach { s ->
+                val url = s["url"]?.asText() ?: return@forEach
+                send(url, "$name $language HLS", ExtractorLinkType.M3U8, q(s), s["signCookie"]?.asText())
+            }
+            // 3) MP4 from the TV server (bcdnt)
+            tv["resources"]?.forEach { r ->
+                val url = r["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
+                if (isPlaceholder(url)) return@forEach
+                send(url, "$name TV $language", ExtractorLinkType.VIDEO, q(r), null)
+            }
+            return gotDash
         }
 
-        // Website = backup only: used just when the app API gave no link at all.
+        /** One language: app MP4 first, then TV DASH/HLS/MP4; website DASH only when TV gave none. */
+        suspend fun languageLinks(sid: String, language: String): Unit = coroutineScope {
+            val tvJob = async { runCatching { MovieBoxTv.playInfo(sid, season, episode) }.getOrNull() }
+            tryApp(sid, language)
+            val tvDash = tvLinks(sid, language, tvJob.await())
+            if (!tvDash) dashLinks(sid, language)
+            Unit
+        }
+
+        appSources.entries.toList().amap { (sid, language) -> languageLinks(sid, language) }
+
+        // Website = backup only: used just when the app and TV APIs gave no link at all.
         // Then its dubs list is used (hidden dubs tried via the app API first), and its own links last.
         if (gotLinks.isNotEmpty()) return true
         val webSources = LinkedHashMap<String, Pair<String, String>>() // sid -> (detailPath, language)
@@ -350,7 +399,7 @@ class MovieBoxProvider : MainAPI() {
         }
         webSources.entries.toList().amap { (sid, v) ->
             val (path, language) = v
-            if (!appSources.containsKey(sid)) tryApp(sid, language)
+            if (!appSources.containsKey(sid)) languageLinks(sid, language)
             if (sid !in gotLinks) {
                 webLinks(sid, path, language)
                 dashLinks(sid, language)

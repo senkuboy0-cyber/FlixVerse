@@ -249,6 +249,99 @@ object MovieBoxWeb {
     }
 }
 
+// ===================== TV app API (MovieBox TV) =====================
+// tv.aoneroom.com: real MP4 (bcdnt) + DASH/HLS (sacdn, CloudFront signCookie). No dubs list: call it with app dub IDs.
+object MovieBoxTv {
+    private const val BASE = "https://tv.aoneroom.com"
+    private const val BFF = "/wefeed-tv-bff"
+    private const val TOKEN_KEY = "moviebox_tv_token_v1"
+    const val UA = "okhttp/4.12.0"
+
+    private val secretKey = base64DecodeArray(
+        String(base64DecodeArray("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="))
+    )
+    private val deviceId: String = ByteArray(8).also { SecureRandom().nextBytes(it) }
+        .joinToString("") { "%02x".format(it) }
+    @Volatile private var token: String? = null
+
+    private fun md5(input: ByteArray): String =
+        MessageDigest.getInstance("MD5").digest(input).joinToString("") { "%02x".format(it) }
+
+    /** Every request carries host=api6.aoneroom.com, and it is part of the signature. */
+    private fun url(path: String, params: Map<String, String>): Pair<String, String> {
+        val all = (params + ("host" to "api6.aoneroom.com")).toSortedMap()
+        val signed = all.entries.joinToString("&") { "${it.key}=${it.value}" }
+        val query = all.entries.joinToString("&") { "${it.key}=${Uri.encode(it.value)}" }
+        return "$BASE$path?$query" to "$path?$signed"
+    }
+
+    private fun headers(method: String, signPath: String, body: String?): Map<String, String> {
+        val ts = System.currentTimeMillis()
+        val bytes = body?.toByteArray(Charsets.UTF_8)
+        val canonical = "$method\napplication/json\napplication/json\n${bytes?.size ?: ""}\n$ts\n${bytes?.let { md5(it) } ?: ""}\n$signPath"
+        val mac = Mac.getInstance("HmacMD5").apply { init(SecretKeySpec(secretKey, "HmacMD5")) }
+        val t = ts.toString()
+        val h = mutableMapOf(
+            "User-Agent" to UA,
+            "Accept" to "application/json",
+            "Content-Type" to "application/json",
+            "x-tr-signature" to "$ts|1|${base64Encode(mac.doFinal(canonical.toByteArray(Charsets.UTF_8)))}",
+            "X-Client-Token" to "$t,${md5(t.reversed().toByteArray())}",
+            "X-Client-Info" to """{"package_name":"com.movieboxtv.app","version_name":"1.1.9.0820.03","version_code":1010908203,"os":"android","os_version":"14","device_id":"$deviceId","brand":"samsung","model":"SM-S918B","system_language":"en","net":"wifi","region":"US","timezone":"UTC","sp_code":"US"}""",
+            "X-Client-Status" to "1",
+        )
+        token?.let { h["Authorization"] = "Bearer $it" }
+        return h
+    }
+
+    private fun jwtExpiry(t: String): Long = try {
+        val part = t.split(".")[1].replace('-', '+').replace('_', '/')
+        val padded = part + "=".repeat((4 - part.length % 4) % 4)
+        MovieBoxApi.mapper.readTree(String(base64DecodeArray(padded)))["exp"]?.asLong() ?: 0L
+    } catch (_: Exception) { 0L }
+
+    private fun isValid(t: String?) = !t.isNullOrBlank() && jwtExpiry(t) > System.currentTimeMillis() / 1000 + 3600
+
+    /** Visitor login: anonymous JWT (~90 days), cached. */
+    private suspend fun login(force: Boolean = false): String? {
+        if (!force) {
+            if (isValid(token)) return token
+            MovieBoxApi.sharedPref?.getString(TOKEN_KEY, null)?.takeIf { isValid(it) }?.let { token = it; return it }
+        }
+        token = null
+        return try {
+            val (u, sp) = url("$BFF/user/visitor-login", emptyMap())
+            val body = "{}"
+            val res = app.post(u, headers = headers("POST", sp, body), requestBody = body.toRequestBody("application/json".toMediaType()))
+            val t = MovieBoxApi.mapper.readTree(res.text)["data"]?.get("token")?.asText()
+            if (!t.isNullOrBlank()) {
+                token = t
+                MovieBoxApi.sharedPref?.edit()?.putString(TOKEN_KEY, t)?.apply()
+            }
+            token
+        } catch (_: Exception) { null }
+    }
+
+    private suspend fun get(path: String, params: Map<String, String>): JsonNode? {
+        for (attempt in 0..1) {
+            login(force = attempt == 1) ?: return null
+            try {
+                val (u, sp) = url(path, params)
+                val res = app.get(u, headers = headers("GET", sp, null))
+                val root = MovieBoxApi.mapper.readTree(res.text)
+                val code = root["code"]?.asInt() ?: 0
+                if (res.code == 401 || res.code == 441 || code == 401 || code == 441) continue
+                return root["data"]
+            } catch (_: Exception) { return null }
+        }
+        return null
+    }
+
+    /** resources[] = MP4 (resolution, url); streams[] = DASH (streamType 4) / HLS (streamType 5) with signCookie. */
+    suspend fun playInfo(sid: String, se: Int, ep: Int): JsonNode? =
+        get("$BFF/subject/play-info/v2", mapOf("subjectId" to sid, "se" to "$se", "ep" to "$ep", "vipLevel" to "2"))
+}
+
 // ===================== Helpers =====================
 object MovieBoxUtils {
     /** 23-second "Update now" clip the API returns instead of the real video. */
