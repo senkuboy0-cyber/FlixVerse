@@ -418,7 +418,7 @@ object MovieBoxTmdb {
             } ?: exact.singleOrNull() ?: return null to null
 
             val images = MovieBoxApi.mapper.readTree(
-                app.get("$API/$kind/${match["id"].asInt()}/images?api_key=$KEY&include_image_language=en,hi,null").text
+                app.get("$API/$kind/${match["id"].asInt()}/images?api_key=$KEY").text
             )
             fun JsonNode.path() = this["file_path"]?.asText()?.takeIf { it.isNotBlank() && !it.endsWith(".svg", true) }
             fun JsonNode.lang() = this["iso_639_1"]?.takeIf { !it.isNull }?.asText()
@@ -427,8 +427,8 @@ object MovieBoxTmdb {
                 return (order.firstNotNullOfOrNull { l -> items.firstOrNull { it.lang() == l } } ?: items.firstOrNull())
                     ?.path()?.let { "$IMG$it" }
             }
-            // Backdrop: no language, then English, then any. Logo: English, then no language, then any. Never svg.
-            pick(images["backdrops"], listOf(null, "en")) to pick(images["logos"], listOf("en", null))
+            // All languages fetched. Backdrop: none, en, hi, bn, else the first one. Logo: en, none, hi, bn, else the first one. Never svg.
+            pick(images["backdrops"], listOf(null, "en", "hi", "bn")) to pick(images["logos"], listOf("en", null, "hi", "bn"))
         } catch (_: Exception) { null to null }
     }
 }

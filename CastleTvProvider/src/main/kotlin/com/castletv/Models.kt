@@ -300,17 +300,18 @@ object CastleTmdb {
             } ?: exact.singleOrNull() ?: return null to null
 
             val images = mapper.readValue<TmdbImagesResponse>(
-                app.get("$API/$kind/${match.id}/images?api_key=$KEY&include_image_language=en,hi,null").text
+                app.get("$API/$kind/${match.id}/images?api_key=$KEY").text
             )
             fun TmdbImageItem.isSvg() = filePath?.endsWith(".svg", ignoreCase = true) == true
-            // Backdrop: no language, then English, then any (never svg)
-            val backdrop = images.backdrops?.filterNot { it.isSvg() }?.let { b ->
-                (b.firstOrNull { it.iso6391 == null } ?: b.firstOrNull { it.iso6391 == "en" } ?: b.firstOrNull())?.filePath
-            }?.let { "$IMG$it" }
-            // Logo: English, then no language, then any (never svg)
-            val logo = images.logos?.filterNot { it.isSvg() }?.let { l ->
-                (l.firstOrNull { it.iso6391 == "en" } ?: l.firstOrNull { it.iso6391 == null } ?: l.firstOrNull())?.filePath
-            }?.let { "$IMG$it" }
+            // All languages fetched; the first image of the first listed language wins, else the first image (never svg)
+            fun pick(list: List<TmdbImageItem>?, order: List<String?>): String? {
+                val items = list?.filter { !it.filePath.isNullOrBlank() && !it.isSvg() }.orEmpty()
+                return (order.firstNotNullOfOrNull { l -> items.firstOrNull { it.iso6391 == l } } ?: items.firstOrNull())
+                    ?.filePath?.let { "$IMG$it" }
+            }
+            // Backdrop: no language, en, hi, bn. Logo: en, no language, hi, bn.
+            val backdrop = pick(images.backdrops, listOf(null, "en", "hi", "bn"))
+            val logo = pick(images.logos, listOf("en", null, "hi", "bn"))
             backdrop to logo
         } catch (e: Exception) {
             null to null
