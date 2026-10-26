@@ -35,6 +35,67 @@ class CastleTvProvider : MainAPI() {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
+    // ------------------------------------------------------------------ TMDB
+    // Castle titles are already clean, so they are searched as they are.
+    // The result whose release year matches the Castle year is taken
+    // (exact year first, then one year either side, then the first result).
+    // Only the backdrop and the title logo are used from TMDB.
+    private val tmdbApi = "https://api.themoviedb.org/3"
+    private val tmdbKey = "1865f43a0549ca50d341dd9ab8b29f49"
+    private val tmdbImg = "https://image.tmdb.org/t/p/original"
+
+    data class TmdbSearchResponse(val results: List<TmdbSearchItem>? = null)
+
+    data class TmdbSearchItem(
+        val id: Int? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("release_date") val releaseDate: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("first_air_date") val firstAirDate: String? = null,
+    )
+
+    data class TmdbImagesResponse(
+        val logos: List<TmdbImageItem>? = null,
+        val backdrops: List<TmdbImageItem>? = null,
+    )
+
+    data class TmdbImageItem(
+        @com.fasterxml.jackson.annotation.JsonProperty("file_path") val filePath: String? = null,
+        @com.fasterxml.jackson.annotation.JsonProperty("iso_639_1") val iso6391: String? = null,
+    )
+
+    private suspend fun tmdbArtwork(title: String, year: Int?, isMovie: Boolean): Pair<String?, String?> {
+        val kind = if (isMovie) "movie" else "tv"
+        return try {
+            val query = java.net.URLEncoder.encode(title, "UTF-8")
+            val results = mapper.readValue<TmdbSearchResponse>(
+                app.get("$tmdbApi/search/$kind?api_key=$tmdbKey&query=$query").text
+            ).results.orEmpty().filter { it.id != null }
+            if (results.isEmpty()) return null to null
+
+            fun yearOf(item: TmdbSearchItem): Int? =
+                (item.releaseDate ?: item.firstAirDate)?.take(4)?.toIntOrNull()
+
+            val match = year?.let { y ->
+                results.firstOrNull { yearOf(it) == y }
+                    ?: results.firstOrNull { yearOf(it)?.let { r -> kotlin.math.abs(r - y) <= 1 } == true }
+            } ?: results.first()
+
+            val images = mapper.readValue<TmdbImagesResponse>(
+                app.get("$tmdbApi/$kind/${match.id}/images?api_key=$tmdbKey&include_image_language=en,hi,null").text
+            )
+            // Textless backdrop first
+            val backdrop = images.backdrops?.let { b ->
+                (b.firstOrNull { it.iso6391 == null } ?: b.firstOrNull())?.filePath
+            }?.let { "$tmdbImg$it" }
+            // English logo, then Hindi, then any
+            val logo = images.logos?.let { l ->
+                (l.firstOrNull { it.iso6391 == "en" } ?: l.firstOrNull { it.iso6391 == "hi" } ?: l.firstOrNull())?.filePath
+            }?.let { "$tmdbImg$it" }
+            backdrop to logo
+        } catch (e: Exception) {
+            null to null
+        }
+    }
+
     // Data classes for API responses
     data class CastleApiResponse(
         val code: Int,
@@ -457,6 +518,10 @@ class CastleTvProvider : MainAPI() {
             // movieType: 1=TvSeries, 2=Movie, 3=Reality Shows, 5=Anime
             val isSeriesLike = details.movieType == 1 || details.movieType == 3 || details.movieType == 5 || 
                                (details.episodes?.size ?: 0) > 1
+
+            // TMDB backdrop and title logo; Castle's horizontal cover stays as the fallback background
+            val (tmdbBackdrop, tmdbLogo) = tmdbArtwork(title, year, !isSeriesLike)
+            val background = tmdbBackdrop ?: backgroundPosterUrl
             
             when {
                 isSeriesLike -> { // TV Series, Reality Shows, Anime (anything with episodes)
@@ -517,7 +582,8 @@ class CastleTvProvider : MainAPI() {
                         episodes = allEpisodes
                     ) {
                         this.posterUrl = posterUrl
-                        this.backgroundPosterUrl = backgroundPosterUrl
+                        this.backgroundPosterUrl = background
+                        this.logoUrl = tmdbLogo
                         this.plot = plot
                         this.year = year
                         this.score = Score.from(rating, 1000)
@@ -541,7 +607,8 @@ class CastleTvProvider : MainAPI() {
                         dataUrl = "${details.id}_${episode?.id}" // Combine movie ID and episode ID
                     ) {
                         this.posterUrl = posterUrl
-                        this.backgroundPosterUrl = backgroundPosterUrl
+                        this.backgroundPosterUrl = background
+                        this.logoUrl = tmdbLogo
                         this.plot = plot
                         this.year = year
                         this.score = Score.from(rating, 1000)
