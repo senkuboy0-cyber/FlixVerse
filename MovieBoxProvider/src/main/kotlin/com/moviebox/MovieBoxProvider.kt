@@ -1,8 +1,6 @@
 package com.moviebox
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.lagradost.cloudstream3.Actor
-import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.ErrorLoadingException
 import com.lagradost.cloudstream3.HomePageList
@@ -83,12 +81,7 @@ class MovieBoxProvider : MainAPI() {
         val plot = data["description"]?.asText()
         val year = data["releaseDate"]?.asText()?.take(4)?.toIntOrNull()
         val rating = Score.from10(data["imdbRatingValue"]?.asText())
-        val tags = data["genre"]?.asText()?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
         val minutes = MovieBoxUtils.durationMinutes(data["duration"]?.asText(), data["durationSeconds"]?.asInt())
-        val actors = data["staffList"]?.filter { it["staffType"]?.asInt() == 1 }?.mapNotNull { s ->
-            val n = s["name"]?.asText() ?: return@mapNotNull null
-            ActorData(Actor(n, s["avatarUrl"]?.asText()), roleString = s["character"]?.asText())
-        }?.distinctBy { it.actor.name }
         val type = tvType(data["subjectType"]?.asInt())
 
         val related = mutableSetOf(id)
@@ -102,10 +95,8 @@ class MovieBoxProvider : MainAPI() {
                 this.backgroundPosterUrl = poster
                 this.plot = plot
                 this.year = year
-                this.tags = tags
                 this.score = rating
                 this.duration = minutes
-                this.actors = actors
                 this.recommendations = recs
             }
         }
@@ -114,10 +105,8 @@ class MovieBoxProvider : MainAPI() {
             this.backgroundPosterUrl = poster
             this.plot = plot
             this.year = year
-            this.tags = tags
             this.score = rating
             this.duration = minutes
-            this.actors = actors
             this.recommendations = recs
         }
     }
@@ -214,12 +203,15 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
+        val gotLinks = Collections.synchronizedSet(mutableSetOf<String>()) // subjectIds the app API gave links for
+
         // ---------- Method 1: app API ----------
         suspend fun appLinks(sid: String, language: String) {
             val linkName = "$name $language"
             suspend fun send(url: String, quality: Int?, type: ExtractorLinkType?, cookie: String? = null) {
                 if (!seenLinks.add("$language|${fileKey(url)}")) return
                 found = true
+                gotLinks.add(sid)
                 callback.invoke(newExtractorLink(name, linkName, url, type) {
                     // CDN: no Referer (429) and a non-browser User-Agent (browser UA gives 428)
                     this.headers = buildMap {
@@ -303,18 +295,49 @@ class MovieBoxProvider : MainAPI() {
         }
 
         // Method 1 first: the app API for every language; record which languages gave links
-        val gotLinks = Collections.synchronizedSet(mutableSetOf<String>())
-        suspend fun tryApp(sid: String, language: String) {
-            val before = seenLinks.size
-            appLinks(sid, language)
-            if (seenLinks.size > before) gotLinks.add(sid)
+        suspend fun tryApp(sid: String, language: String) = appLinks(sid, language)
+        // Website detail: gives each language's detailPath (needed for DASH) and the full dubs list
+        val webMain = MovieBoxWeb.subject(id)
+        val webPaths = mutableMapOf<String, String>()
+        webMain?.get("detailPath")?.asText()?.let { webPaths[id] = it }
+        webMain?.get("dubs")?.forEach { d ->
+            val sid = d["subjectId"]?.asText() ?: return@forEach
+            d["detailPath"]?.asText()?.let { webPaths.putIfAbsent(sid, it) }
         }
-        appSources.entries.toList().amap { (sid, language) -> tryApp(sid, language) }
+
+        // DASH (.mpd, hevc) from the website for a language; MP4 stays from the app API
+        suspend fun dashLinks(sid: String, language: String) {
+            val path = webPaths[sid] ?: return
+            MovieBoxWeb.dash(sid, path, season, episode).forEach { d ->
+                val url = d["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
+                if (!seenLinks.add("$language|${fileKey(url)}")) return@forEach
+                val cookie = d["signCookie"]?.asText().orEmpty()
+                val q = d["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+                found = true
+                callback.invoke(newExtractorLink(name, "$name $language DASH", url, ExtractorLinkType.DASH) {
+                    this.headers = buildMap {
+                        put("User-Agent", MovieBoxWeb.BROWSER_UA)
+                        put("Referer", "${MovieBoxWeb.SITE}/")
+                        put("Origin", MovieBoxWeb.SITE)
+                        if (cookie.isNotBlank()) {
+                            put("Cookie", cookie)
+                            put("X-MB-Token", cookie)
+                        }
+                    }
+                    if (q != null && q > 0) this.quality = q
+                })
+            }
+        }
+
+        // Method 1: app API (MP4) + website DASH for the same languages, together
+        appSources.entries.toList().amap { (sid, language) ->
+            tryApp(sid, language)
+            dashLinks(sid, language)
+        }
 
         // Website = backup only: used just when the app API gave no link at all.
         // Then its dubs list is used (hidden dubs tried via the app API first), and its own links last.
-        if (found) return true
-        val webMain = MovieBoxWeb.subject(id)
+        if (gotLinks.isNotEmpty()) return true
         val webSources = LinkedHashMap<String, Pair<String, String>>() // sid -> (detailPath, language)
         webMain?.get("dubs")?.forEach { d ->
             val sid = d["subjectId"]?.asText() ?: return@forEach
@@ -327,7 +350,10 @@ class MovieBoxProvider : MainAPI() {
         webSources.entries.toList().amap { (sid, v) ->
             val (path, language) = v
             if (!appSources.containsKey(sid)) tryApp(sid, language)
-            if (sid !in gotLinks) webLinks(sid, path, language)
+            if (sid !in gotLinks) {
+                webLinks(sid, path, language)
+                dashLinks(sid, language)
+            }
         }
         return found
     }

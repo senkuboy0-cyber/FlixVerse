@@ -223,6 +223,14 @@ object MovieBoxWeb {
     /** subject (with dubs: subjectId, lanName, lanCode, original, type, detailPath) */
     suspend fun subject(id: String): JsonNode? = getJson("$API/detail?subjectId=$id", "$SITE/")?.get("subject")
 
+    /** DASH (.mpd, hevc) list: only returned when streamSignType=1 is sent. Items carry url, resolutions, signCookie. */
+    suspend fun dash(sid: String, detailPath: String, se: Int, ep: Int): List<JsonNode> =
+        getJson(
+            "$API/subject/play?subjectId=$sid&se=$se&ep=$ep&detailPath=$detailPath" +
+                    "&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1",
+            playPage(sid, detailPath)
+        )?.get("dash")?.toList() ?: emptyList()
+
     /** play + download responses for one episode (streams/hls/dash/downloads/captions). */
     suspend fun media(sid: String, detailPath: String, se: Int, ep: Int): List<JsonNode> {
         val ref = playPage(sid, detailPath)
