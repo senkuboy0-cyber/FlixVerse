@@ -102,13 +102,12 @@ class ManageSectionsDialog(
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         )
         // Search icon (magnifier) under Reset
-        val searchIcon = drawable("search_icon")
-        val searchBtn: View = if (searchIcon != null) ImageView(context).apply {
-            setImageDrawable(searchIcon)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+        val searchBtn: View = ImageView(context).apply {
+            setImageDrawable(IconDrawable(IconDrawable.Kind.SEARCH, accent))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             contentDescription = "Search"
-        } else text("🔍", 18f, accent).apply { gravity = Gravity.CENTER }
+        }
         searchBtn.apply {
             isClickable = true
             isFocusable = true

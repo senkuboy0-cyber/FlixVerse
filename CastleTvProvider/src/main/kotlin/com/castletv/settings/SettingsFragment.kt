@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -68,8 +69,10 @@ class SettingsFragment(
         titles.addView(text("CASTLE TV", 12f, Color.parseColor("#9A9A9A")).apply { letterSpacing = 0.1f })
         titles.addView(text("Settings", 24f, Color.WHITE, true))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val save = text("✔", 20f, Color.WHITE).apply {
-            gravity = Gravity.CENTER
+        val save = ImageView(ctx).apply {
+            setImageDrawable(IconDrawable(IconDrawable.Kind.SAVE))
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             isClickable = true
             isFocusable = true
             contentDescription = "Save & Reload"
