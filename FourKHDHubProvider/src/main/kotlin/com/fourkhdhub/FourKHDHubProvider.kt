@@ -76,7 +76,16 @@ class FourKHDHubProvider : MainAPI() {
         val doc = app.get(url, headers = HubResolver.ua).document
         val h1 = doc.selectFirst("h1.page-title")?.text()?.trim()
             ?: doc.selectFirst("h1")?.text()?.trim() ?: ""
-        val year = Regex("\\((\\d{4})\\)").find(h1)?.groupValues?.get(1)?.toIntOrNull()
+        // Movies have "Hope (2026)" in h1; series h1 has no year -> ld+json startDate / datePublished, then Release row
+        val ldYear = doc.select("script[type=application/ld+json]").firstNotNullOfOrNull {
+            Regex("\"(?:startDate|datePublished)\"\\s*:\\s*\"(\\d{4})").find(it.data())?.groupValues?.get(1)?.toIntOrNull()
+        }
+        val releaseYear = doc.select(".metadata-item").firstOrNull {
+            it.selectFirst(".metadata-label")?.text()?.contains("Release", true) == true
+        }?.selectFirst(".metadata-value")?.text()?.let { Regex("(\\d{4})").find(it)?.value?.toIntOrNull() }
+        val year = Regex("\\((\\d{4})\\)").find(h1)?.groupValues?.get(1)?.toIntOrNull() ?: ldYear ?: releaseYear
+        // Real plot = first p.mt-4 with text (og:description is a generic SEO line)
+        val plot = doc.select("p.mt-4").map { it.text().trim() }.firstOrNull { it.length > 20 }
         val title = h1.replace(Regex("\\s*\\(\\d{4}\\)\\s*$"), "").trim().ifBlank { h1 }
         val poster = doc.selectFirst("div.poster-image img")?.attr("src")
             ?: doc.selectFirst("meta[property=og:image]")?.attr("content")
@@ -121,6 +130,7 @@ class FourKHDHubProvider : MainAPI() {
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
                 this.year = year
+                this.plot = plot
                 this.score = score
                 this.recommendations = recs
             }
@@ -138,6 +148,7 @@ class FourKHDHubProvider : MainAPI() {
         return newMovieLoadResponse(title, url, TvType.Movie, movieFiles.toJson()) {
             this.posterUrl = poster
             this.year = year
+            this.plot = plot
             this.score = score
             this.recommendations = recs
         }
