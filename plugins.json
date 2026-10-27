@@ -21,6 +21,28 @@
         "fileHash": "sha256-d0074107ca36157915b319e403c04ecc9a63607ffc23c27016cde891efb24e98"
     },
     {
+        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/FourKHDHubProvider.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "FourKHDHubProvider",
+        "internalName": "FourKHDHubProvider",
+        "authors": [
+            "senkuboy0-cyber"
+        ],
+        "description": "4K-HDHub Movies and Series (all qualities, HubCloud FSL / Buzz / Pixel)",
+        "fileSize": 32930,
+        "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
+        "language": "hi",
+        "tvTypes": [
+            "Movie",
+            "TvSeries",
+            "Anime"
+        ],
+        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/FourKHDHubProvider/icon.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-f69e829f3da3dcfb8b909f6249f4c211a5e7b94ad25eaa79001f8c925739dea3"
+    },
+    {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MlsbdProvider.cs3",
         "status": 1,
         "version": 2,
