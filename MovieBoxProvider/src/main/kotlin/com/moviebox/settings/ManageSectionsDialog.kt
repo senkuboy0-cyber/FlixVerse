@@ -22,6 +22,7 @@ import android.view.Window
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -97,10 +98,21 @@ class ManageSectionsDialog(
             gravity = Gravity.END
         }
         actions.addView(button("Reset", accent) { confirmReset() })
-        actions.addView(button("Search", accent) { toggleSearch() }.apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { topMargin = dp(6) }
-        })
+        // Search icon (magnifier) under Reset
+        val searchIcon = drawable("search_icon")
+        val searchBtn: View = if (searchIcon != null) ImageView(context).apply {
+            setImageDrawable(searchIcon)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            contentDescription = "Search"
+        } else text("🔍", 18f, accent).apply { gravity = Gravity.CENTER }
+        searchBtn.apply {
+            isClickable = true
+            isFocusable = true
+            background = drawable("outline")
+            setOnClickListener { toggleSearch() }
+        }
+        actions.addView(searchBtn, LinearLayout.LayoutParams(dp(42), dp(42)).apply { topMargin = dp(6) })
         header.addView(actions)
         root.addView(header)
 
