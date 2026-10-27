@@ -102,6 +102,8 @@ object HubResolver {
             if (!href.startsWith("http")) continue
             if (!text.startsWith("Download", true) && !text.startsWith("Watch", true)) continue
             if (text.contains("Telegram", true)) continue
+            // ZipDisk = .mkv.zip archive, not playable
+            if (text.contains("ZipDisk", true) || href.substringBefore("?").endsWith(".zip", true)) continue
             // Never Google: 10Gbps server -> googleusercontent
             if (text.contains("10Gbps", true) || href.contains("googleusercontent") ||
                 href.contains("gpdl.") || href.contains("pixel.hubcloud")
@@ -111,6 +113,8 @@ object HubResolver {
                     text.contains("FSLv2", true) -> emit("FSLv2", label, href, null, seenUrls, callback)
                     text.contains("FSL", true) -> emit("FSL", label, href, null, seenUrls, callback)
                     text.contains("Buzz", true) -> buzz(href, label, seenUrls, callback)
+                    // Older uploads: "Download File [1.07 GB]" = direct workers.dev mkv (206, no headers needed)
+                    text.contains("Download File", true) -> emit("HubCloud", label, href, null, seenUrls, callback)
                     text.contains("Pixel", true) || href.contains("pixeldrain") -> pixel(href, label, seenUrls, callback)
                     text.startsWith("Watch", true) -> watch(href, label, seenUrls, callback)
                 }
