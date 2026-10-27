@@ -292,8 +292,14 @@ object CastleTmdb {
         return listOf(this.title, name, originalTitle, originalName).any { norm(it) == t }
     }
 
-    suspend fun artwork(title: String, year: Int?, isMovie: Boolean): Pair<String?, String?> {
+    /** Title for TMDB search only: (...) and [...] parts removed. The app keeps showing the original title. */
+    private fun searchTitle(title: String): String =
+        title.replace(Regex("\\([^)]*\\)|\\[[^\\]]*\\]"), " ").replace(Regex("\\s+"), " ").trim()
+            .ifEmpty { title }
+
+    suspend fun artwork(originalTitle: String, year: Int?, isMovie: Boolean): Pair<String?, String?> {
         val kind = if (isMovie) "movie" else "tv"
+        val title = searchTitle(originalTitle)
         return try {
             val query = java.net.URLEncoder.encode(title, "UTF-8")
             // Exact-name results of one search; name is always matched, with or without the year
