@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 40
+version = 41
 
 android {
     // Root build sets namespace "com.anime"; override so BuildConfig is generated in com.castletv
@@ -40,8 +40,6 @@ cloudstream {
         "Movie",
         "TvSeries"
     )
-
-    requiresResources = true
 
     iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/CastleTvProvider/icon.png"
 }

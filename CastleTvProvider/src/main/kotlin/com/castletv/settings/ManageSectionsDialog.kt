@@ -5,7 +5,6 @@ import com.castletv.CastleSections
 import android.app.Dialog
 import android.content.Context
 import android.content.res.ColorStateList
-import android.content.res.Resources
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -35,11 +34,10 @@ import androidx.appcompat.app.AlertDialog
  */
 class ManageSectionsDialog(
     context: Context,
-    private val res: Resources,
     private val onSaved: () -> Unit,
 ) : Dialog(context) {
 
-    private val accent = Color.parseColor("#4F8BFF")
+    private val accent = Ui.ACCENT
     private val state: MutableList<CastleSections.State> = CastleSections.load()
     private lateinit var listBox: LinearLayout
     private val rows = mutableListOf<View>()
@@ -48,9 +46,11 @@ class ManageSectionsDialog(
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), context.resources.displayMetrics).toInt()
 
-    private fun drawable(name: String): Drawable? {
-        val id = res.getIdentifier(name, "drawable", "com.castletv")
-        return if (id != 0) res.getDrawable(id, null) else null
+    private fun drawable(name: String): Drawable? = when (name) {
+        "outline" -> Ui.outline(context)
+        "dialog_background" -> Ui.dialogBackground(context)
+        "section_row_background" -> Ui.sectionRow(context)
+        else -> null
     }
 
     private fun text(s: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply {

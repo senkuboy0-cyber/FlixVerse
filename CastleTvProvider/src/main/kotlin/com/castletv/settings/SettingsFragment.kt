@@ -5,39 +5,33 @@ import com.castletv.CastleTvProviderPlugin
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 
+/** Castle TV settings, built entirely in code (no XML layout or drawables). */
 class SettingsFragment(
     private val plugin: CastleTvProviderPlugin,
     private val sharedPref: SharedPreferences,
 ) : DialogFragment() {
 
-    private val res = plugin.resources ?: throw Exception("Unable to access plugin resources")
+    private fun dp(v: Int) = Ui.dp(requireContext(), v)
 
-    private fun getDrawable(name: String): Drawable {
-        val id = res.getIdentifier(name, "drawable", "com.castletv")
-        return res.getDrawable(id, null) ?: throw Exception("Drawable $name not found")
-    }
-
-    private fun <T : View> View.findView(name: String): T {
-        val id = res.getIdentifier(name, "id", "com.castletv")
-        if (id == 0) throw Exception("View ID $name not found.")
-        return this.findViewById(id)
-    }
-
-    private fun View.makeTvCompatible() {
-        val outlineId = res.getIdentifier("outline", "drawable", "com.castletv")
-        this.background = res.getDrawable(outlineId, null)
+    private fun text(s: String, size: Float, color: Int, bold: Boolean = false) = TextView(requireContext()).apply {
+        text = s
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
+        setTextColor(color)
+        if (bold) setTypeface(typeface, Typeface.BOLD)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,42 +44,73 @@ class SettingsFragment(
         super.onStart()
         dialog?.window?.apply {
             val dm = resources.displayMetrics
-            val maxDialogWidth = (500 * dm.density).toInt()
-            val width = minOf((dm.widthPixels * 0.9f).toInt(), maxDialogWidth)
+            val width = minOf((dm.widthPixels * 0.9f).toInt(), (500 * dm.density).toInt())
             setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         }
     }
 
-    override fun onCreateView(
-        inflater: LayoutInflater, container: ViewGroup?,
-        savedInstanceState: Bundle?,
-    ): View {
-        val layoutId = res.getIdentifier("fragment_castle_settings", "layout", "com.castletv")
-        val layout = res.getLayout(layoutId)
-        val view = inflater.inflate(layout, container, false)
-
-        val drawableId = res.getIdentifier("dialog_background", "drawable", "com.castletv")
-        if (drawableId != 0) view.background = res.getDrawable(drawableId, null)
-
-        val saveIcon: ImageView = view.findView("saveIcon")
-        val sectionsIcon: ImageView = view.findView("sectionsIcon")
-        val sectionsRow: View = view.findView("sectionsRow")
-
-        saveIcon.setImageDrawable(getDrawable("save_icon"))
-        sectionsIcon.setImageDrawable(getDrawable("settings_icon"))
-        sectionsIcon.background = getDrawable("icon_circle_brown")
-        sectionsRow.background = getDrawable("settings_item_background")
-        saveIcon.makeTvCompatible()
-
-        sectionsRow.setOnClickListener {
-            ManageSectionsDialog(requireContext(), res) { askRestart() }.show()
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val ctx = requireContext()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Ui.dialogBackground(ctx)
+            setPadding(dp(18), dp(20), dp(18), dp(18))
         }
 
-        saveIcon.setOnClickListener { askRestart() }
+        // Header: titles + save button
+        val header = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val titles = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        titles.addView(text("CASTLE TV", 12f, Color.parseColor("#9A9A9A")).apply { letterSpacing = 0.1f })
+        titles.addView(text("Settings", 24f, Color.WHITE, true))
+        header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val save = text("✔", 20f, Color.WHITE).apply {
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Save & Reload"
+            background = Ui.outline(ctx)
+            setOnClickListener { askRestart() }
+        }
+        header.addView(save, LinearLayout.LayoutParams(dp(44), dp(44)))
+        root.addView(header)
 
-        return view
+        root.addView(View(ctx).apply { setBackgroundColor(Color.parseColor("#2A2A2A")) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { setMargins(0, dp(12), 0, dp(16)) })
+
+        root.addView(text("HOME PAGE", 12f, Color.parseColor("#9A9A9A")).apply {
+            letterSpacing = 0.1f
+            setPadding(dp(4), 0, 0, dp(8))
+        })
+
+        // Manage Sections row
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            isClickable = true
+            isFocusable = true
+            background = Ui.settingsItem(ctx)
+            setOnClickListener { ManageSectionsDialog(ctx) { askRestart() }.show() }
+        }
+        row.addView(text("⚙", 20f, Color.WHITE).apply {
+            gravity = Gravity.CENTER
+            background = Ui.circle(Color.parseColor("#4A3210"))
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        val texts = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(text("Manage Sections", 16f, Color.WHITE, true))
+        texts.addView(text("Add, hide, rename or reorder home page sections", 12f, Color.parseColor("#AAAAAA")).apply {
+            setPadding(0, dp(3), 0, 0)
+        })
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) })
+        row.addView(text("›", 22f, Color.parseColor("#888888")).apply { setPadding(dp(8), 0, 0, 0) })
+        root.addView(row)
+
+        return ScrollView(ctx).apply { addView(root) }
     }
 
     private fun askRestart() {
