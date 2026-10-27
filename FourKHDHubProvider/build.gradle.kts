@@ -1,9 +1,9 @@
 // use an integer for version numbers
-version = 2
+version = 3
 
 cloudstream {
     language = "hi"
-    description = "4K-HDHub Movies and Series (all qualities, HubCloud FSL / Buzz / Pixel)"
+    description = "4K-HDHub Movies and Series (all qualities, TMDB artwork + episode info)"
     authors = listOf("senkuboy0-cyber")
 
     /**

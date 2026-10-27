@@ -118,17 +118,25 @@ class FourKHDHubProvider : MainAPI() {
                     if (titles[key] == null) episodeTitle(fileName)?.let { titles[key] = it }
                 }
             }
+            // TMDB (Castle rules): backdrop, logo; episode title, description, thumbnail
+            val art = FourKHDHubTmdb.artwork(title, year, isMovie = false)
+            val tmdbEps = art.id?.let { FourKHDHubTmdb.episodes(it, files.keys.toList()) }.orEmpty()
             val episodes = files.entries
                 .sortedWith(compareBy({ it.key.first }, { it.key.second }))
                 .map { (key, list) ->
+                    val meta = tmdbEps[key]
                     newEpisode(list.distinctBy { it.name + it.links.first() }.toJson()) {
                         this.season = key.first
                         this.episode = key.second
-                        this.name = titles[key]
+                        this.name = meta?.name ?: titles[key]
+                        this.description = meta?.description
+                        this.posterUrl = meta?.still
                     }
                 }
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = art.backdrop
+                this.logoUrl = art.logo
                 this.year = year
                 this.plot = plot
                 this.score = score
@@ -145,8 +153,11 @@ class FourKHDHubProvider : MainAPI() {
                 .filter { it.startsWith("http") && !it.contains("t.me") }.distinct()
             if (links.isEmpty()) null else HubFile(fileName, size, links)
         }
+        val art = FourKHDHubTmdb.artwork(title, year, isMovie = true)
         return newMovieLoadResponse(title, url, TvType.Movie, movieFiles.toJson()) {
             this.posterUrl = poster
+            this.backgroundPosterUrl = art.backdrop
+            this.logoUrl = art.logo
             this.year = year
             this.plot = plot
             this.score = score
