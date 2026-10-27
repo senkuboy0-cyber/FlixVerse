@@ -11,6 +11,15 @@ object MovieBoxSections {
     data class State(val key: String, var enabled: Boolean, var name: String? = null)
 
     private const val PREF_KEY = "moviebox_sections_v1"
+
+    /**
+     * Sections that became defaults after users already saved a list: on first load they are ticked and moved
+     * right after the given section (once per key, recorded in MIGRATED_KEY).
+     */
+    private const val MIGRATED_KEY = "moviebox_sections_migrated_v1"
+    private val NEW_DEFAULTS = listOf(
+        "g|8|7225420846562011440" to "r|8|536501058407990248", // Anime Zone after Animated Film
+    )
     private val mapper = jacksonObjectMapper()
 
     // Developer's own categories: always listed first, enabled by default, title can't be changed.
@@ -23,6 +32,7 @@ object MovieBoxSections {
         S("r|0|3859721901924910512", "South Indian", "Home · South Indian", true),
         S("r|0|8019599703232971616", "Hollywood", "Home · Hollywood", true),
         S("r|8|536501058407990248", "Animated Film", "Anime · Animated Film", true),
+        S("g|8|7225420846562011440", "Anime Zone", "Anime · Anime in Progress", true),
         S("r|18|7878715743607948784", "K-Drama", "Asian Drama · K-Drama", true),
         S("r|18|8788126208987989488", "C-Drama", "Asian Drama · C-Drama", true),
         S("r|5|8223396272405987416", "Bengali Series", "TV Series · New Bengali", true),
@@ -73,7 +83,6 @@ object MovieBoxSections {
         S("g|7|1176888442710547312", "Revenge", "Short TV · Revenge👊"),
         S("g|7|5230501941297433160", "Mini TV in Hindi", "Short TV · Mini TV in Hindi"),
         S("r|8|8434602210994128512", "Anime Trending Now", "Anime · Trending Now🔥"),
-        S("g|8|7225420846562011440", "Anime in Progress", "Anime · Anime in Progress ✈️"),
         S("r|8|6087417564575974904", "Burning with Ardour", "Anime · Burning with Ardour❤️‍🔥"),
         S("r|8|3085012826717671128", "Anime Dark Fantasy", "Anime · Dark Fantasy👹"),
         S("r|8|26746744553834104", "Game On: Driven To Win!", "Anime · Game On：Driven To Win！"),
@@ -193,7 +202,8 @@ object MovieBoxSections {
 
     /** Saved order + flags; unknown keys dropped, new catalog entries appended. */
     fun load(): MutableList<State> {
-        val raw = MovieBoxApi.sharedPref?.getString(PREF_KEY, null) ?: return defaultState().toMutableList()
+        val raw = MovieBoxApi.sharedPref?.getString(PREF_KEY, null)
+            ?: return defaultState().toMutableList().also { markMigrated() }
         val saved = try {
             mapper.readTree(raw).mapNotNull { n ->
                 val key = n["k"]?.asText() ?: return@mapNotNull null
@@ -204,7 +214,22 @@ object MovieBoxSections {
         } catch (_: Exception) { return defaultState().toMutableList() }
         val have = saved.map { it.key }.toSet()
         ALL.filter { it.key !in have }.forEach { saved.add(State(it.key, it.isDefault)) }
+        migrate(saved)
         return saved
+    }
+
+    private fun migrate(list: MutableList<State>) {
+        val pref = MovieBoxApi.sharedPref ?: return
+        val done = pref.getStringSet(MIGRATED_KEY, emptySet()) ?: emptySet()
+        val todo = NEW_DEFAULTS.filter { it.first !in done }
+        if (todo.isEmpty()) return
+        todo.forEach { (key, after) ->
+            list.removeAll { it.key == key }
+            val at = list.indexOfFirst { it.key == after }
+            list.add(if (at >= 0) at + 1 else 0, State(key, true))
+        }
+        save(list)
+        pref.edit().putStringSet(MIGRATED_KEY, done + todo.map { it.first }).apply()
     }
 
     fun save(list: List<State>) {
@@ -216,7 +241,12 @@ object MovieBoxSections {
         MovieBoxApi.sharedPref?.edit()?.putString(PREF_KEY, mapper.writeValueAsString(arr))?.apply()
     }
 
-    fun reset() { MovieBoxApi.sharedPref?.edit()?.remove(PREF_KEY)?.apply() }
+    /** Fresh/default lists already have the new defaults in place. */
+    private fun markMigrated() {
+        MovieBoxApi.sharedPref?.edit()?.putStringSet(MIGRATED_KEY, NEW_DEFAULTS.map { it.first }.toSet())?.apply()
+    }
+
+    fun reset() { MovieBoxApi.sharedPref?.edit()?.remove(PREF_KEY)?.apply(); markMigrated() }
 
     fun titleOf(st: State): String {
         val s = find(st.key) ?: return st.key

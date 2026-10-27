@@ -5,6 +5,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.moviebox.MovieBoxUtils.isPlaceholder
 import kotlinx.coroutines.*
+import okhttp3.Interceptor
 import java.util.Collections
 
 class MovieBoxProvider : MainAPI() {
@@ -435,5 +436,17 @@ class MovieBoxProvider : MainAPI() {
             }
             null
         }.filterNotNull()
+    }
+
+    /**
+     * MP4 on the CDN comes with an unquoted Content-Disposition filename; a title with a comma makes Cronet fail
+     * (ERR_RESPONSE_HEADERS_MULTIPLE_CONTENT_DISPOSITION -> 2001). An interceptor makes CloudStream use OkHttp
+     * for these links, and the header is dropped. DASH/HLS stay on Cronet.
+     */
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        if (extractorLink.type != ExtractorLinkType.VIDEO || !extractorLink.url.contains("hakunaymatata.com")) return null
+        return Interceptor { chain ->
+            chain.proceed(chain.request()).newBuilder().removeHeader("Content-Disposition").build()
+        }
     }
 }

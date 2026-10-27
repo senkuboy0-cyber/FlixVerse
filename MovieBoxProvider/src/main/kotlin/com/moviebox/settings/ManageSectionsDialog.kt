@@ -11,7 +11,9 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -28,6 +30,7 @@ import androidx.appcompat.app.AlertDialog
 /**
  * "Manage Sections": tick to show on the home page, ▲▼ to reorder, ✎ to rename (not for default sections).
  * Changes are kept in memory until Save; Reset goes back to the defaults (applied on Save).
+ * Search filters the list by name; ▲▼ then move past the hidden rows to the next shown one.
  */
 class ManageSectionsDialog(
     context: Context,
@@ -39,6 +42,8 @@ class ManageSectionsDialog(
     private val state: MutableList<MovieBoxSections.State> = MovieBoxSections.load()
     private lateinit var listBox: LinearLayout
     private val rows = mutableListOf<View>()
+    private lateinit var searchBox: EditText
+    private var query = ""
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), context.resources.displayMetrics).toInt()
 
@@ -87,8 +92,40 @@ class ManageSectionsDialog(
         titles.addView(text("MOVIEBOX", 12f, Color.parseColor("#9A9A9A")).apply { letterSpacing = 0.1f })
         titles.addView(text("Manage Sections", 22f, Color.WHITE, true))
         header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(button("Reset", accent) { confirmReset() })
+        val actions = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+        }
+        actions.addView(button("Reset", accent) { confirmReset() })
+        actions.addView(button("Search", accent) { toggleSearch() }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = dp(6) }
+        })
+        header.addView(actions)
         root.addView(header)
+
+        // Search field (hidden until Search is pressed)
+        searchBox = EditText(context).apply {
+            visibility = View.GONE
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT
+            hint = "Search sections"
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.parseColor("#777777"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#222222")); cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), Color.parseColor("#3A3A3A"))
+            }
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) { query = s?.toString()?.trim().orEmpty(); applyFilter() }
+            })
+        }
+        root.addView(searchBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = dp(10) })
 
         root.addView(divider().apply {
             (layoutParams as LinearLayout.LayoutParams).setMargins(0, dp(12), 0, dp(8))
@@ -144,6 +181,30 @@ class ManageSectionsDialog(
             rows.add(row)
             listBox.addView(row)
         }
+        applyFilter()
+    }
+
+    private fun toggleSearch() {
+        if (searchBox.visibility == View.VISIBLE) {
+            searchBox.setText("")
+            searchBox.visibility = View.GONE
+        } else {
+            searchBox.visibility = View.VISIBLE
+            searchBox.requestFocus()
+            window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        }
+    }
+
+    private fun matches(st: MovieBoxSections.State): Boolean {
+        if (query.isEmpty()) return true
+        val sec = MovieBoxSections.find(st.key)
+        return MovieBoxSections.titleOf(st).contains(query, true) || sec?.label?.contains(query, true) == true
+            || sec?.title?.contains(query, true) == true
+    }
+
+    /** Show only matching rows (all when the search is empty). */
+    private fun applyFilter() {
+        state.forEachIndexed { i, st -> rows.getOrNull(i)?.visibility = if (matches(st)) View.VISIBLE else View.GONE }
         refreshArrows()
     }
 
@@ -205,17 +266,30 @@ class ManageSectionsDialog(
         setOnClickListener { onClick() }
     }
 
+    /** Index of the next shown row from i in direction dir, or -1. */
+    private fun nextShown(i: Int, dir: Int): Int {
+        var j = i + dir
+        while (j in rows.indices) {
+            if (rows[j].visibility == View.VISIBLE) return j
+            j += dir
+        }
+        return -1
+    }
+
     private fun refreshArrows() {
         rows.forEachIndexed { i, row ->
-            row.findViewWithTag<TextView>("up")?.apply { isEnabled = i > 0; alpha = if (i > 0) 1f else 0.3f }
-            row.findViewWithTag<TextView>("down")?.apply { isEnabled = i < rows.size - 1; alpha = if (i < rows.size - 1) 1f else 0.3f }
+            val canUp = nextShown(i, -1) >= 0
+            val canDown = nextShown(i, 1) >= 0
+            row.findViewWithTag<TextView>("up")?.apply { isEnabled = canUp; alpha = if (canUp) 1f else 0.3f }
+            row.findViewWithTag<TextView>("down")?.apply { isEnabled = canDown; alpha = if (canDown) 1f else 0.3f }
         }
     }
 
     private fun move(st: MovieBoxSections.State, dir: Int) {
         val i = state.indexOf(st)
-        val j = i + dir
-        if (i < 0 || j < 0 || j >= state.size) return
+        if (i < 0) return
+        val j = nextShown(i, dir)
+        if (j < 0) return
         state.removeAt(i); state.add(j, st)
         val view = rows.removeAt(i); rows.add(j, view)
         listBox.removeViewAt(i); listBox.addView(view, j)
