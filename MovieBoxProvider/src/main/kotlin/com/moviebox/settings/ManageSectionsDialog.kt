@@ -97,7 +97,10 @@ class ManageSectionsDialog(
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
         }
-        actions.addView(button("Reset", accent) { confirmReset() })
+        actions.addView(
+            button("Reset", accent) { confirmReset() }.apply { maxLines = 1 },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        )
         // Search icon (magnifier) under Reset
         val searchIcon = drawable("search_icon")
         val searchBtn: View = if (searchIcon != null) ImageView(context).apply {
@@ -112,7 +115,7 @@ class ManageSectionsDialog(
             background = drawable("outline")
             setOnClickListener { toggleSearch() }
         }
-        actions.addView(searchBtn, LinearLayout.LayoutParams(dp(42), dp(42)).apply { topMargin = dp(6) })
+        actions.addView(searchBtn, LinearLayout.LayoutParams(dp(42), dp(42)).apply { topMargin = dp(6); gravity = Gravity.END })
         header.addView(actions)
         root.addView(header)
 
