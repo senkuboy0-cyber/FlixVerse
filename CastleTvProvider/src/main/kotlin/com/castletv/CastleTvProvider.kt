@@ -11,36 +11,7 @@ import java.time.ZoneId
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
-// ===================== Home categories =====================
-
-/**
- * A home category is one row of a Castle tab.
- * The home API is called with the tab's locationId and the row is picked by its id.
- * locationId: 1001 = Home, 1002 = Series, 1003 = Movies, 1069 = Anime
- */
-data class CastleCategory(
-    val name: String,
-    val locationId: Int,
-    val rowId: Long,
-)
-
-object CastleCategories {
-    val list = listOf(
-        CastleCategory("Popular Movies", 1001, 5661125979266048),
-        CastleCategory("Popular WebSeries", 1001, 5836681858493440),
-        CastleCategory("International Movies", 1003, 5893762742585344),
-        CastleCategory("Bollywood", 1003, 5806276744741888),
-        CastleCategory("Tollywood Movies", 1001, 6117579693457408),
-        CastleCategory("Comedy", 1003, 5760725379365888),
-        CastleCategory("Romance", 1003, 5760730682670080),
-        CastleCategory("Korean Drama Hindi", 1002, 7954955612732416),
-        CastleCategory("New Anime", 1069, 8702100632647680),
-        CastleCategory("Anime Movie", 1069, 8807267191114752),
-    )
-
-    /** mainPageOf key: "locationId|rowId" */
-    fun key(c: CastleCategory) = "${c.locationId}|${c.rowId}"
-}
+// Home categories: see CastleSections (user can tick, reorder and rename them in the plugin settings).
 
 class CastleTvProvider : MainAPI() {
     companion object {
@@ -114,9 +85,8 @@ class CastleTvProvider : MainAPI() {
     private fun yearOf(timestamp: Long?) =
         timestamp?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).year }
 
-    override val mainPage = mainPageOf(
-        *CastleCategories.list.map { CastleCategories.key(it) to it.name }.toTypedArray()
-    )
+    // key "locationId|rowId", in the order and with the names chosen in Manage Sections
+    override val mainPage = mainPageOf(*CastleSections.mainPage().toTypedArray())
 
     /** Fetch one page of a Castle tab (home API with locationId) and decrypt it. */
     private suspend fun fetchTabPage(locationId: Int, page: Int, securityKey: String): HomePageData? {

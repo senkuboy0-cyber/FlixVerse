@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 39
+version = 40
 
 android {
     // Root build sets namespace "com.anime"; override so BuildConfig is generated in com.castletv
@@ -13,6 +13,12 @@ android {
         // In the original repo this field was injected from the root build.gradle.kts
         buildConfigField("String", "CASTLE_SUFFIX", "\"T!BgJB\"")
     }
+}
+
+dependencies {
+    val implementation by configurations
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.14.0")
 }
 
 cloudstream {
@@ -34,6 +40,8 @@ cloudstream {
         "Movie",
         "TvSeries"
     )
+
+    requiresResources = true
 
     iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/CastleTvProvider/icon.png"
 }
