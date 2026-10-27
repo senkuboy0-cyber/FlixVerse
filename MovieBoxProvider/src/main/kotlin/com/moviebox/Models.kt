@@ -156,8 +156,9 @@ object MovieBoxApi {
     suspend fun genreTop(type: String, page: Int, perPage: Int = 20) =
         post("$BFF/subject-api/genre-top", mapOf("type" to type, "page" to page, "perPage" to perPage))
 
+    /** tabId=MovieTV: only movies/series, 20 per page, real pager.hasMore (the "All" tab repeats one page of 10). */
     suspend fun search(keyword: String, page: Int) =
-        post("$BFF/subject-api/search/v2", mapOf("page" to page, "perPage" to 20, "keyword" to keyword))
+        post("$BFF/subject-api/search/v2", mapOf("page" to page, "perPage" to 20, "keyword" to keyword, "tabId" to "MovieTV"))
 
     suspend fun subject(id: String) = get("$BFF/subject-api/get?subjectId=$id")
     suspend fun seasonInfo(id: String) = get("$BFF/subject-api/season-info?subjectId=$id")

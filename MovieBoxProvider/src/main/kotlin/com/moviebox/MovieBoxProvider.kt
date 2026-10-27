@@ -41,7 +41,7 @@ class MovieBoxProvider : MainAPI() {
         val data = MovieBoxApi.search(query, page)
         val list = data?.get("results")?.flatMap { r -> r["subjects"]?.mapNotNull { it.toSearch() } ?: emptyList() }
             ?.distinctBy { it.url } ?: emptyList()
-        val hasMore = data?.get("pager")?.get("hasMore")?.asBoolean() ?: false
+        val hasMore = list.isNotEmpty() && (data?.get("pager")?.get("hasMore")?.asBoolean() ?: false)
         return newSearchResponseList(list, hasMore)
     }
 
