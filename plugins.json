@@ -30,7 +30,7 @@
             "senkuboy0-cyber"
         ],
         "description": "4K-HDHub Movies and Series (all qualities, TMDB artwork + episode info)",
-        "fileSize": 53638,
+        "fileSize": 53705,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -40,7 +40,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/FourKHDHubProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-5bff311d202750b4401c126071e48b259b6426c3f910d4183cf6af648e0c8ea1"
+        "fileHash": "sha256-68c51edbbdfa1ac8be065b3a3cb951163e3116dc92cf0daf8adbeba790a3b1e0"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MlsbdProvider.cs3",
