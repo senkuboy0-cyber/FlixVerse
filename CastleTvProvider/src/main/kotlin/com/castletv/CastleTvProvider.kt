@@ -34,6 +34,8 @@ object CastleCategories {
         CastleCategory("Comedy", 1003, 5760725379365888),
         CastleCategory("Romance", 1003, 5760730682670080),
         CastleCategory("Korean Drama Hindi", 1002, 7954955612732416),
+        CastleCategory("New Anime", 1069, 8702100632647680),
+        CastleCategory("Anime Movie", 1069, 8807267191114752),
     )
 
     /** mainPageOf key: "locationId|rowId" */
@@ -80,6 +82,27 @@ class CastleTvProvider : MainAPI() {
         if (encrypted.isBlank()) return null
         val json = decryptData(encrypted, securityKey) ?: return null
         return mapper.readValue<MovieDetailsResponse>(json).data
+    }
+
+    /** Castle's own recommendations for one title (12 items of the same kind). */
+    private suspend fun fetchRecommendations(movieId: String, securityKey: String): List<SearchResponse> {
+        return try {
+            val url = "$mainUrl/film-api/v0.1/movie/getRecommend?channel=IndiaA&clientType=1&lang=en-US&movieId=$movieId&packageName=com.external.castle"
+            val encrypted = app.get(url).text
+            if (encrypted.isBlank()) return emptyList()
+            val json = decryptData(encrypted, securityKey) ?: return emptyList()
+            mapper.readValue<RecommendResponse>(json).data.orEmpty().mapNotNull { item ->
+                val title = item.title ?: return@mapNotNull null
+                val id = item.id?.toString() ?: return@mapNotNull null
+                if (id == movieId) return@mapNotNull null
+                newMovieSearchResponse(name = title, url = id, type = tvTypeOf(item.movieType)) {
+                    this.posterUrl = item.coverVerticalImage ?: item.coverHorizontalImage
+                    this.year = yearOf(item.publishTime)
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     // movieType: 1=TvSeries, 2=Movie, 3=Reality Shows, 5=Anime
@@ -192,6 +215,7 @@ class CastleTvProvider : MainAPI() {
             // TMDB backdrop and title logo; Castle's horizontal cover stays as the fallback background
             val (tmdbBackdrop, tmdbLogo) = CastleTmdb.artwork(title, year, !isSeriesLike)
             val background = tmdbBackdrop ?: backgroundPosterUrl
+            val recs = fetchRecommendations(movieId, securityKey)
 
             if (isSeriesLike) {
                 val allEpisodes = mutableListOf<Episode>()
@@ -235,6 +259,7 @@ class CastleTvProvider : MainAPI() {
                     this.posterUrl = posterUrl
                     this.backgroundPosterUrl = background
                     this.logoUrl = tmdbLogo
+                    this.recommendations = recs
                     this.plot = plot
                     this.year = year
                     this.score = Score.from(rating, 1000)
@@ -256,6 +281,7 @@ class CastleTvProvider : MainAPI() {
                     this.posterUrl = posterUrl
                     this.backgroundPosterUrl = background
                     this.logoUrl = tmdbLogo
+                    this.recommendations = recs
                     this.plot = plot
                     this.year = year
                     this.score = Score.from(rating, 1000)

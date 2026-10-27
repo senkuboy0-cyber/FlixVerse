@@ -179,6 +179,13 @@ data class SearchApiResponse(
     val data: SearchData
 )
 
+// getRecommend: data is a plain list of titles
+data class RecommendResponse(
+    val code: Int,
+    val msg: String,
+    val data: List<SearchResultItem>? = null
+)
+
 data class SearchData(
     val page: Int? = null,
     val pages: Int? = null,
