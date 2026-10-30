@@ -78,6 +78,7 @@ object HubResolver {
             link.contains("hubcloud") || link.contains("hubdrive") -> link
             else -> decodeGreen(link, mainUrl) ?: return
         }
+        
         // HubDrive page only points to the same HubCloud drive
         if (target.contains("hubdrive")) {
             val doc = app.get(target, headers = ua).document
@@ -147,15 +148,55 @@ object HubResolver {
         emit("Watch", label, real, null, seenUrls, callback)
     }
 
-    /** pixeldrain.dev/u/ID -> api/file/ID (only if the file is alive; negn6f is a dead placeholder) */
-    private suspend fun pixel(href: String, label: String, seenUrls: MutableSet<String>, callback: (ExtractorLink) -> Unit) {
-        val id = Regex("/u/([A-Za-z0-9]+)").find(href)?.groupValues?.get(1)
-            ?: Regex("/file/([A-Za-z0-9]+)").find(href)?.groupValues?.get(1) ?: return
-        if (id == DEAD_PIXEL) return
-        val host = Regex("https?://[^/]+").find(href)?.value ?: "https://pixeldrain.dev"
-        val info = app.get("$host/api/file/$id/info", headers = ua)
-        if (!info.isSuccessful) return
-        emit("Pixel", label, "$host/api/file/$id?download", null, seenUrls, callback)
+    /** pixeldrain.dev/u/ID -> api/file/ID (skip dead placeholder negn6f) */
+    private suspend fun pixel(
+        href: String,
+        label: String,
+        seenUrls: MutableSet<String>,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        if (href.contains("pixel.hubcloud", ignoreCase = true)) return
+
+        val id = Regex("""/(?:u|file)/([A-Za-z0-9]+)""", RegexOption.IGNORE_CASE)
+            .find(href)?.groupValues?.get(1)
+            ?: return
+
+        if (id.equals(DEAD_PIXEL, ignoreCase = true)) return  // negn6f
+
+        val host = when {
+            href.contains("pixeldrain.com", ignoreCase = true) -> "https://pixeldrain.com"
+            else -> "https://pixeldrain.dev"
+        }
+
+        val infoRes = try {
+            app.get(
+                "$host/api/file/$id/info",
+                headers = ua + mapOf("Accept" to "application/json")
+            )
+        } catch (_: Exception) {
+            return
+        }
+        if (!infoRes.isSuccessful) return
+
+        val obj = try {
+            JSONObject(infoRes.text)
+        } catch (_: Exception) {
+            return
+        }
+        if (obj.has("can_download") && !obj.optBoolean("can_download", true)) return
+        if (obj.optLong("size", 1L) <= 0L) return
+
+        // Actual video URL (verified)
+        val streamUrl = "$host/api/file/$id"
+
+        emit(
+            server = "Pixel",
+            label = label,
+            url = streamUrl,
+            referer = "$host/",
+            seenUrls = seenUrls,
+            callback = callback
+        )
     }
 
     /** Buzz (fuckingfast.net/{slug}): page holds the signed ts.fuckingfast.net/d/... link (may be Cloudflare-blocked) */
