@@ -23,7 +23,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/FourKHDHubProvider.cs3",
         "status": 1,
-        "version": 4,
+        "version": 5,
         "name": "FourKHDHubProvider",
         "internalName": "FourKHDHubProvider",
         "authors": [
@@ -40,7 +40,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/FourKHDHubProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-6dc6f11320e7fe74228477451edf444c2cb63c1b00aee0e263d73d0a4bd57a04"
+        "fileHash": "sha256-5dcd4b19bb30b01a37d0c94fae7cb4c505542bacfc3237484bc75e3723c55d6b"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MlsbdProvider.cs3",
