@@ -10,6 +10,9 @@ import java.time.Instant
 import java.time.ZoneId
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 // Home categories: see CastleSections (user can tick, reorder and rename them in the plugin settings).
 
@@ -191,58 +194,62 @@ class CastleTvProvider : MainAPI() {
 
             if (isSeriesLike) {
                 val allEpisodes = mutableListOf<Episode>()
-                val tmdbSeasonCache = mutableMapOf<Int, Map<Int, TmdbEpisode>>()
+                val tmdbEpisodes = tmdbInfo.tmdbId?.let { CastleTmdb.getAllEpisodes(it) }.orEmpty()
+
+                val rawSiteEpisodes = mutableListOf<Triple<Int, ApiEpisode, String>>() // seasonNumber, episode, seasonId
 
                 if (details.seasons != null && details.seasons.size > 1) {
-                    // Multiple seasons: fetch each season's episodes
                     for (season in details.seasons) {
                         val seasonId = season.movieId?.toString() ?: continue
                         val seasonNumber = season.number ?: continue
-                        
-                        val tmdbEpisodes = tmdbInfo.tmdbId?.let { id ->
-                            tmdbSeasonCache.getOrPut(seasonNumber) { CastleTmdb.getSeason(id, seasonNumber) }
-                        }.orEmpty()
-
                         try {
                             val seasonDetails = fetchDetails(seasonId, securityKey) ?: continue
                             seasonDetails.episodes?.forEach { episode ->
-                                val epNum = episode.number ?: (allEpisodes.size + 1)
-                                val tEp = tmdbEpisodes[epNum]
-                                
-                                allEpisodes.add(
-                                    newEpisode("${seasonId}_${episode.id}") {
-                                        this.name = tEp?.name?.takeIf { it.isNotBlank() } ?: episode.title ?: "Episode $epNum"
-                                        this.season = seasonNumber
-                                        this.episode = epNum
-                                        this.posterUrl = tEp?.stillPath?.let { "https://image.tmdb.org/t/p/w780$it" } ?: episode.coverImage
-                                        this.description = tEp?.overview?.takeIf { it.isNotBlank() }
-                                    }
-                                )
+                                rawSiteEpisodes.add(Triple(seasonNumber, episode, seasonId))
                             }
                         } catch (e: Exception) {
                             // Continue with other seasons even if one fails
                         }
                     }
                 } else {
-                    // Single season or no season info
                     val sNum = details.seasonNumber ?: 1
-                    val tmdbEpisodes = tmdbInfo.tmdbId?.let { id ->
-                        tmdbSeasonCache.getOrPut(sNum) { CastleTmdb.getSeason(id, sNum) }
-                    }.orEmpty()
-                    
-                    details.episodes?.forEachIndexed { index, episode ->
-                        val epNum = episode.number ?: (index + 1)
-                        val tEp = tmdbEpisodes[epNum]
+                    details.episodes?.forEach { episode ->
+                        rawSiteEpisodes.add(Triple(sNum, episode, details.id.toString()))
+                    }
+                }
+
+                var overallIndex = 0
+                rawSiteEpisodes.groupBy { it.first }.forEach { (sNum, epsInSeason) ->
+                    epsInSeason.forEachIndexed { seasonEpIndex, (_, episode, sId) ->
+                        val calculatedEpNum = seasonEpIndex + 1 // Forces episode 1 for each new season
+
+                        // 1. Match using the newly calculated 1-based episode number
+                        var tmdbEp = tmdbEpisodes.find { it.seasonNumber == sNum && it.episodeNumber == calculatedEpNum }
                         
+                        // 2. Fallback to API's raw episode number if different
+                        if (tmdbEp == null && episode.number != null) {
+                            tmdbEp = tmdbEpisodes.find { it.seasonNumber == sNum && it.episodeNumber == episode.number }
+                        }
+                        
+                        // 3. Fallback to chronological overall index (handles anime with 1 flat TMDB season)
+                        if (tmdbEp == null) {
+                            tmdbEp = tmdbEpisodes.getOrNull(overallIndex)
+                        }
+
+                        val epName = tmdbEp?.name?.takeIf { it.isNotBlank() } ?: episode.title ?: "Episode $calculatedEpNum"
+                        val epPoster = tmdbEp?.stillPath?.let { "https://image.tmdb.org/t/p/w780$it" } ?: episode.coverImage
+                        val epDesc = tmdbEp?.overview?.takeIf { it.isNotBlank() }
+
                         allEpisodes.add(
-                            newEpisode("${details.id}_${episode.id}") {
-                                this.name = tEp?.name?.takeIf { it.isNotBlank() } ?: episode.title ?: "Episode $epNum"
+                            newEpisode("${sId}_${episode.id}") {
+                                this.name = epName
                                 this.season = sNum
-                                this.episode = epNum
-                                this.posterUrl = tEp?.stillPath?.let { "https://image.tmdb.org/t/p/w780$it" } ?: episode.coverImage
-                                this.description = tEp?.overview?.takeIf { it.isNotBlank() }
+                                this.episode = calculatedEpNum
+                                this.posterUrl = epPoster
+                                this.description = epDesc
                             }
                         )
+                        overallIndex++
                     }
                 }
 
