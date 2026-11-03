@@ -264,6 +264,23 @@ data class TmdbImageItem(
     @JsonProperty("iso_639_1") val iso6391: String? = null,
 )
 
+data class TmdbSeasonResponse(
+    val episodes: List<TmdbEpisode>? = null
+)
+
+data class TmdbEpisode(
+    @JsonProperty("episode_number") val episodeNumber: Int? = null,
+    val name: String? = null,
+    val overview: String? = null,
+    @JsonProperty("still_path") val stillPath: String? = null
+)
+
+data class TmdbArtwork(
+    val backdrop: String?,
+    val logo: String?,
+    val tmdbId: Int?
+)
+
 /**
  * Backdrop and title logo from TMDB.
  * Castle titles are already clean, so the title is searched as it is (name + year first, then name only):
@@ -297,7 +314,7 @@ object CastleTmdb {
         title.replace(Regex("\\([^)]*\\)|\\[[^\\]]*\\]"), " ").replace(Regex("\\s+"), " ").trim()
             .ifEmpty { title }
 
-    suspend fun artwork(originalTitle: String, year: Int?, isMovie: Boolean): Pair<String?, String?> {
+    suspend fun artwork(originalTitle: String, year: Int?, isMovie: Boolean): TmdbArtwork {
         val kind = if (isMovie) "movie" else "tv"
         val title = searchTitle(originalTitle)
         return try {
@@ -310,12 +327,12 @@ object CastleTmdb {
             val yearParam = if (isMovie) "primary_release_year" else "first_air_date_year"
             val exact = (year?.let { exactResults("&$yearParam=$it") }.orEmpty())
                 .ifEmpty { exactResults("") }
-            if (exact.isEmpty()) return null to null
+            if (exact.isEmpty()) return TmdbArtwork(null, null, null)
 
             val match = year?.let { y ->
                 exact.firstOrNull { it.year() == y }
                     ?: exact.firstOrNull { it.year()?.let { r -> kotlin.math.abs(r - y) <= 1 } == true }
-            } ?: exact.singleOrNull() ?: return null to null
+            } ?: exact.singleOrNull() ?: return TmdbArtwork(null, null, null)
 
             val images = mapper.readValue<TmdbImagesResponse>(
                 app.get("$API/$kind/${match.id}/images?api_key=$KEY").text
@@ -330,9 +347,21 @@ object CastleTmdb {
             // Backdrop: no language, en, hi, bn. Logo: en, no language, hi, bn.
             val backdrop = pick(images.backdrops, listOf(null, "en", "hi", "bn"))
             val logo = pick(images.logos, listOf("en", null, "hi", "bn"))
-            backdrop to logo
+            
+            TmdbArtwork(backdrop, logo, match.id)
         } catch (e: Exception) {
-            null to null
+            TmdbArtwork(null, null, null)
+        }
+    }
+
+    suspend fun getSeason(tmdbId: Int, seasonNumber: Int): Map<Int, TmdbEpisode> {
+        return try {
+            val res = app.get("$API/tv/$tmdbId/season/$seasonNumber?api_key=$KEY").text
+            mapper.readValue<TmdbSeasonResponse>(res).episodes.orEmpty()
+                .filter { it.episodeNumber != null }
+                .associateBy { it.episodeNumber!! }
+        } catch (e: Exception) {
+            emptyMap()
         }
     }
 }
