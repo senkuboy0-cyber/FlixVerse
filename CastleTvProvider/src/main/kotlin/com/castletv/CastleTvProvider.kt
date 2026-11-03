@@ -183,27 +183,39 @@ class CastleTvProvider : MainAPI() {
                 (details.episodes?.size ?: 0) > 1
 
             // TMDB backdrop and title logo; Castle's horizontal cover stays as the fallback background
-            val (tmdbBackdrop, tmdbLogo) = CastleTmdb.artwork(title, year, !isSeriesLike)
+            val tmdbInfo = CastleTmdb.artwork(title, year, !isSeriesLike)
+            val tmdbBackdrop = tmdbInfo.backdrop
+            val tmdbLogo = tmdbInfo.logo
             val background = tmdbBackdrop ?: backgroundPosterUrl
             val recs = fetchRecommendations(movieId, securityKey)
 
             if (isSeriesLike) {
                 val allEpisodes = mutableListOf<Episode>()
+                val tmdbSeasonCache = mutableMapOf<Int, Map<Int, TmdbEpisode>>()
 
                 if (details.seasons != null && details.seasons.size > 1) {
                     // Multiple seasons: fetch each season's episodes
                     for (season in details.seasons) {
                         val seasonId = season.movieId?.toString() ?: continue
                         val seasonNumber = season.number ?: continue
+                        
+                        val tmdbEpisodes = tmdbInfo.tmdbId?.let { id ->
+                            tmdbSeasonCache.getOrPut(seasonNumber) { CastleTmdb.getSeason(id, seasonNumber) }
+                        }.orEmpty()
+
                         try {
                             val seasonDetails = fetchDetails(seasonId, securityKey) ?: continue
                             seasonDetails.episodes?.forEach { episode ->
+                                val epNum = episode.number ?: (allEpisodes.size + 1)
+                                val tEp = tmdbEpisodes[epNum]
+                                
                                 allEpisodes.add(
                                     newEpisode("${seasonId}_${episode.id}") {
-                                        this.name = episode.title ?: "Episode ${episode.number ?: allEpisodes.size + 1}"
+                                        this.name = tEp?.name?.takeIf { it.isNotBlank() } ?: episode.title ?: "Episode $epNum"
                                         this.season = seasonNumber
-                                        this.episode = episode.number ?: allEpisodes.size + 1
-                                        this.posterUrl = episode.coverImage
+                                        this.episode = epNum
+                                        this.posterUrl = tEp?.stillPath?.let { "https://image.tmdb.org/t/p/w780$it" } ?: episode.coverImage
+                                        this.description = tEp?.overview?.takeIf { it.isNotBlank() }
                                     }
                                 )
                             }
@@ -213,13 +225,22 @@ class CastleTvProvider : MainAPI() {
                     }
                 } else {
                     // Single season or no season info
+                    val sNum = details.seasonNumber ?: 1
+                    val tmdbEpisodes = tmdbInfo.tmdbId?.let { id ->
+                        tmdbSeasonCache.getOrPut(sNum) { CastleTmdb.getSeason(id, sNum) }
+                    }.orEmpty()
+                    
                     details.episodes?.forEachIndexed { index, episode ->
+                        val epNum = episode.number ?: (index + 1)
+                        val tEp = tmdbEpisodes[epNum]
+                        
                         allEpisodes.add(
                             newEpisode("${details.id}_${episode.id}") {
-                                this.name = episode.title ?: "Episode ${episode.number ?: index + 1}"
-                                this.season = details.seasonNumber
-                                this.episode = episode.number ?: index + 1
-                                this.posterUrl = episode.coverImage
+                                this.name = tEp?.name?.takeIf { it.isNotBlank() } ?: episode.title ?: "Episode $epNum"
+                                this.season = sNum
+                                this.episode = epNum
+                                this.posterUrl = tEp?.stillPath?.let { "https://image.tmdb.org/t/p/w780$it" } ?: episode.coverImage
+                                this.description = tEp?.overview?.takeIf { it.isNotBlank() }
                             }
                         )
                     }
@@ -368,7 +389,7 @@ class CastleTvProvider : MainAPI() {
                     val q = if (apiRes == 2) 720 else 480
                     if (seen.add("raw|$apiUrl")) {
                         callback.invoke(
-                            newExtractorLink(source = name, name = "$name $label", url = apiUrl, type = ExtractorLinkType.M3U8) {
+                            newExtractorLink(source = name, name = "$name$label", url = apiUrl, type = ExtractorLinkType.M3U8) {
                                 this.headers = linkHeaders
                                 this.quality = q
                             }
@@ -386,7 +407,7 @@ class CastleTvProvider : MainAPI() {
                 }.toSet()
                 val qualities = mutableListOf<Pair<Int, String>>()
                 for (q in listOf(1080, 720, 480)) {
-                    if (!seen.add("${parts.hash}|$q")) continue
+                    if (!seen.add("${parts.hash}\vert{}$q")) continue
                     val candidates = CastleHls.qualityUrls(parts, q)
                     val url = candidates.firstOrNull { isPlayableM3u8(it) }
                         ?: candidates.firstOrNull()?.takeIf { q in listed }
@@ -401,7 +422,7 @@ class CastleTvProvider : MainAPI() {
                 if (audio.size <= 1) {
                     for ((q, url) in qualities) {
                         callback.invoke(
-                            newExtractorLink(source = name, name = "$name $label", url = url, type = ExtractorLinkType.M3U8) {
+                            newExtractorLink(source = name, name = "$name$label", url = url, type = ExtractorLinkType.M3U8) {
                                 this.headers = linkHeaders
                                 this.quality = q
                             }
@@ -416,7 +437,7 @@ class CastleTvProvider : MainAPI() {
                             callback.invoke(
                                 newExtractorLink(
                                     source = name,
-                                    name = "$name $language",
+                                    name = "$name$language",
                                     url = CastleAudioProxy.playlistUrl(url, stream.pid),
                                     type = ExtractorLinkType.M3U8
                                 ) {
