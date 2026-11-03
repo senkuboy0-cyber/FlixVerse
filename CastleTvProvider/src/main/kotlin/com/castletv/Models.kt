@@ -6,6 +6,9 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.base64DecodeArray
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.nio.charset.StandardCharsets
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -264,11 +267,20 @@ data class TmdbImageItem(
     @JsonProperty("iso_639_1") val iso6391: String? = null,
 )
 
+data class TmdbShowResponse(
+    val seasons: List<TmdbSeasonBase>? = null
+)
+
+data class TmdbSeasonBase(
+    @JsonProperty("season_number") val seasonNumber: Int? = null
+)
+
 data class TmdbSeasonResponse(
     val episodes: List<TmdbEpisode>? = null
 )
 
 data class TmdbEpisode(
+    @JsonProperty("season_number") val seasonNumber: Int? = null,
     @JsonProperty("episode_number") val episodeNumber: Int? = null,
     val name: String? = null,
     val overview: String? = null,
@@ -299,7 +311,7 @@ object CastleTmdb {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    private fun norm(s: String?) = s?.trim()?.replace(Regex("\\s+"), " ")?.lowercase()
+    private fun norm(s: String?) = s?.trim()?.replace(Regex("""\s+"""), " ")?.lowercase()
 
     private fun TmdbSearchItem.year(): Int? =
         (releaseDate ?: firstAirDate)?.take(4)?.toIntOrNull()
@@ -311,7 +323,7 @@ object CastleTmdb {
 
     /** Title for TMDB search only: (...) and [...] parts removed. The app keeps showing the original title. */
     private fun searchTitle(title: String): String =
-        title.replace(Regex("\\([^)]*\\)|\\[[^\\]]*\\]"), " ").replace(Regex("\\s+"), " ").trim()
+        title.replace(Regex("""\([^)]*\)|\[[^\]]*\]"""), " ").replace(Regex("""\s+"""), " ").trim()
             .ifEmpty { title }
 
     suspend fun artwork(originalTitle: String, year: Int?, isMovie: Boolean): TmdbArtwork {
@@ -354,14 +366,31 @@ object CastleTmdb {
         }
     }
 
-    suspend fun getSeason(tmdbId: Int, seasonNumber: Int): Map<Int, TmdbEpisode> {
+    /** Fetches all TMDB episodes for a TV show, ignores Season 0 (Specials), and flattens them into a sorted list. */
+    suspend fun getAllEpisodes(tmdbId: Int): List<TmdbEpisode> {
         return try {
-            val res = app.get("$API/tv/$tmdbId/season/$seasonNumber?api_key=$KEY").text
-            mapper.readValue<TmdbSeasonResponse>(res).episodes.orEmpty()
-                .filter { it.episodeNumber != null }
-                .associateBy { it.episodeNumber!! }
+            val showRes = app.get("$API/tv/$tmdbId?api_key=$KEY").text
+            val show = mapper.readValue<TmdbShowResponse>(showRes)
+            
+            val validSeasons = show.seasons.orEmpty().mapNotNull { it.seasonNumber }.filter { it > 0 }
+            
+            val allEps = mutableListOf<TmdbEpisode>()
+            coroutineScope {
+                validSeasons.map { sNum ->
+                    async {
+                        try {
+                            val sRes = app.get("$API/tv/$tmdbId/season/$sNum?api_key=$KEY").text
+                            mapper.readValue<TmdbSeasonResponse>(sRes).episodes.orEmpty()
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
+                    }
+                }.awaitAll().forEach { allEps.addAll(it) }
+            }
+            
+            allEps.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
         } catch (e: Exception) {
-            emptyMap()
+            emptyList()
         }
     }
 }
