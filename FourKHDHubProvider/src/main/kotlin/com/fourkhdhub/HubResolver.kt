@@ -94,12 +94,26 @@ object HubResolver {
         val gamer = drivePage.document.selectFirst("a#download")?.attr("href")?.takeIf { it.startsWith("http") }
             ?: Regex("var url\\s*=\\s*'([^']+)'").find(html)?.groupValues?.get(1)
             ?: return
-        val doc = app.get(gamer, headers = ua, referer = driveUrl).document
+        val gamerPage = app.get(gamer, headers = ua, referer = driveUrl)
+        val doc = gamerPage.document
+        // The static markup only holds the dead placeholder pixeldrain.dev/u/negn6f.
+        // The live link is injected by JS:
+        //   var pxl = "https://pixeldrain.dev/u/<realId>";
+        //   document.getElementById("pxl-1").href = pxl;
+        val jsPixel = parseJsPixel(gamerPage.text)
 
-        val buttons = doc.select("a.btn[href], a[href]").distinctBy { it.attr("href") }
-        for (btn in buttons) {
-            val text = btn.text().trim()
-            val href = btn.attr("href").trim()
+        val buttons = doc.select("a.btn[href], a[href]").map { btn ->
+            val id = btn.attr("id")
+            val raw = btn.attr("href").trim()
+            val href = when {
+                jsPixel.containsKey(id) -> jsPixel[id].orEmpty()
+                id.startsWith("pxl") -> jsPixel["pxl"] ?: raw
+                raw.contains(DEAD_PIXEL, ignoreCase = true) -> jsPixel["pxl"] ?: raw
+                else -> raw
+            }
+            btn.text().trim() to href
+        }.distinctBy { it.second }
+        for ((text, href) in buttons) {
             if (!href.startsWith("http")) continue
             if (!text.startsWith("Download", true) && !text.startsWith("Watch", true)) continue
             if (text.contains("Telegram", true)) continue
@@ -114,13 +128,47 @@ object HubResolver {
                     text.contains("FSLv2", true) -> emit("FSLv2", label, href, null, seenUrls, callback)
                     text.contains("FSL", true) -> emit("FSL", label, href, null, seenUrls, callback)
                     text.contains("Buzz", true) -> buzz(href, label, seenUrls, callback)
+                    // Pixel before "Download File": the button can be a pixeldrain link too
+                    text.contains("Pixel", true) || href.contains("pixeldrain", true) ->
+                        pixel(href, label, seenUrls, callback)
                     // Older uploads: "Download File [1.07 GB]" = direct workers.dev mkv (206, no headers needed)
                     text.contains("Download File", true) -> emit("HubCloud", label, href, null, seenUrls, callback)
-                    text.contains("Pixel", true) || href.contains("pixeldrain") -> pixel(href, label, seenUrls, callback)
                     text.startsWith("Watch", true) -> watch(href, label, seenUrls, callback)
                 }
             }
         }
+    }
+
+    /**
+     * gamerxyt hides the real pixeldrain url in JS. The static markup only contains the
+     * dead placeholder (pixeldrain.dev/u/negn6f) and the browser replaces it with:
+     *   var pxl = "https://pixeldrain.dev/u/REALID";
+     *   document.getElementById("pxl-1").href = pxl;
+     * Reading only the static href makes every PixelServer button look dead.
+     * Returns: element id -> live url, plus "pxl" -> live url as generic fallback.
+     */
+    private fun parseJsPixel(html: String): Map<String, String> {
+        val vars = HashMap<String, String>()
+        Regex("""var\s+([A-Za-z_][\w]*)\s*=\s*["']([^"']+)["']""").findAll(html).forEach {
+            vars[it.groupValues[1]] = it.groupValues[2]
+        }
+        val out = HashMap<String, String>()
+        // var pxl = "https://pixeldrain.dev/u/REALID" (also pxl1, pxl2, ...)
+        vars.filterKeys { it.startsWith("pxl") }
+            .filterValues { it.contains("pixeldrain", true) }
+            .forEach { (k, v) -> out[k] = v }
+        if (!out.containsKey("pxl")) {
+            vars.values.firstOrNull { it.contains("pixeldrain", true) }?.let { out["pxl"] = it }
+        }
+        // document.getElementById("pxl-1").href = pxl;
+        Regex("""getElementById\(\s*["']([^"']+)["']\s*\)\s*\.\s*href\s*=\s*([A-Za-z_][\w]*)""")
+            .findAll(html).forEach { m ->
+                vars[m.groupValues[2]]?.let { out[m.groupValues[1]] = it }
+            }
+        // document.getElementById("pxl-1").href = "https://..."
+        Regex("""getElementById\(\s*["']([^"']+)["']\s*\)\s*\.\s*href\s*=\s*["']([^"']+)["']""")
+            .findAll(html).forEach { m -> out[m.groupValues[1]] = m.groupValues[2] }
+        return out
     }
 
     private suspend fun emit(
