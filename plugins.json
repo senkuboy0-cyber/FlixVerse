@@ -76,7 +76,7 @@
             "senkuboy0-cyber"
         ],
         "description": "MovieBox Movies and Series (multi-audio)",
-        "fileSize": 121501,
+        "fileSize": 121497,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -85,6 +85,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-e6dc272c766b394086f6eb1f72029479f5b1ef157486e41e11fbe0de7d991192"
+        "fileHash": "sha256-88fbb7f10abf58c1555ae91747291a4ca413e5554a2ff554a03431882f975a15"
     }
 ]
