@@ -69,7 +69,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MovieBoxProvider.cs3",
         "status": 1,
-        "version": 19,
+        "version": 20,
         "name": "MovieBoxProvider",
         "internalName": "MovieBoxProvider",
         "authors": [
@@ -85,6 +85,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-88fbb7f10abf58c1555ae91747291a4ca413e5554a2ff554a03431882f975a15"
+        "fileHash": "sha256-bbd22a1c4a407ee0440033ab70a8860677286e3a91f0d40c8bee7f930dc45e55"
     }
 ]
