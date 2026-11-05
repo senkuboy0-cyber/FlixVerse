@@ -325,7 +325,7 @@ object MovieBoxTv {
 
     /** resources[] = MP4 (resolution, url); streams[] = DASH (streamType 4) / HLS (streamType 5) with signCookie. */
     suspend fun playInfo(sid: String, se: Int, ep: Int): JsonNode? =
-        get("$BFF/subject/play-info/v2", mapOf("subjectId" to sid, "se" to "$se", "ep" to "$ep", "vipLevel" to "2"))
+        get("$BFF/subject/play-info", mapOf("subjectId" to sid, "se" to "$se", "ep" to "$ep", "vipLevel" to "2"))
 }
 
 // ===================== Helpers =====================
