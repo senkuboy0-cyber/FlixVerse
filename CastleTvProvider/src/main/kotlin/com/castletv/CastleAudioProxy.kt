@@ -27,7 +27,8 @@ object CastleAudioProxy {
 
     data class AudioStream(val pid: Int, val language: String?)
 
-    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
+    // Added 0x06 (AC-3/Private PES) and other common audio types to fix separation issues on certain videos
+    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x06, 0x0F, 0x11, 0x80, 0x81, 0x82, 0x86, 0x87)
     private const val PACKET = 188
     private const val IO_BUFFER_SIZE = 64 * 1024
     private const val MAX_PROBE_PACKETS = 128
