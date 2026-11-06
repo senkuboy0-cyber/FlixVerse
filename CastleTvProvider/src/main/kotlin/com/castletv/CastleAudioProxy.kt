@@ -19,10 +19,9 @@ import java.util.concurrent.Executors
  * Media3 reads HLS TS by stream type, so it keeps only one AAC stream and the player
  * never shows the other languages (androidx/media#2634, judged "bad media").
  *
- * This local proxy serves a virtual HLS Master Playlist with #EXT-X-MEDIA audio renditions
- * or individual rewritten playlists/segments with the PMT rewritten to list only one chosen
- * audio PID (other audio packets are dropped), so every language is selectable straight from
- * the player's track selector or as its own playable link. No external app is needed.
+ * This local proxy serves the playlist and its segments with the PMT rewritten to list
+ * only one chosen audio PID (other audio packets are dropped), so every language gets
+ * its own playable link in the internal player. No external app is needed.
  */
 object CastleAudioProxy {
 
@@ -45,19 +44,6 @@ object CastleAudioProxy {
     }
 
     // ===================== Public API =====================
-
-    /**
-     * Local HLS master playlist URL that exposes all detected audio tracks via #EXT-X-MEDIA
-     * so CloudStream's internal player displays them in the Audio Track selection menu.
-     */
-    fun masterUrl(playlistUrl: String, tracks: List<AudioStream>? = null): String {
-        val detected = tracks ?: probe(playlistUrl)
-        if (detected.isEmpty()) return playlistUrl
-        val tracksParam = detected.mapIndexed { idx, s ->
-            "${s.pid}:${s.language ?: "und"}:${encode(languageName(s.language, idx))}"
-        }.joinToString(",")
-        return "http://127.0.0.1:${port()}/m/${encode(tracksParam)}/${encode(playlistUrl)}/master.m3u8"
-    }
 
     /** Local playlist URL that plays [playlistUrl] with only [audioPid] as its audio. */
     fun playlistUrl(playlistUrl: String, audioPid: Int): String =
@@ -103,41 +89,14 @@ object CastleAudioProxy {
                 socket.sendBufferSize = OUTPUT_BUFFER_SIZE
                 val path = readRequestPath(socket.getInputStream()) ?: return
                 val out = socket.getOutputStream()
-                // Routes:
-                // /m/{tracks}/{url}/master.m3u8 -> Virtual Master Playlist with multiple audio tracks
-                // /p/{pid}/{url}/index.m3u8     -> Media Playlist (Video + 1 Audio)
-                // /a/{pid}/{url}/audio.m3u8     -> Audio-only Media Playlist (1 Audio only)
-                // /s/{pid}/{url}/seg.ts         -> Filtered TS Segment (Video + 1 Audio)
-                // /as/{pid}/{url}/seg.ts        -> Filtered Audio-only TS Segment (1 Audio only, Video dropped)
+                // /p/{pid}/{url}/index.m3u8  or  /s/{pid}/{url}/seg.ts
                 val parts = path.trimStart('/').split('/')
                 if (parts.size < 3) return respond(out, 404, "text/plain", "Not found".toByteArray())
-
+                val pid = parts[1].toIntOrNull() ?: return respond(out, 400, "text/plain", "Bad pid".toByteArray())
+                val target = decode(parts[2])
                 when (parts[0]) {
-                    "m" -> {
-                        val tracksParam = decode(parts[1])
-                        val target = decode(parts[2])
-                        respond(out, 200, "application/vnd.apple.mpegurl", buildMasterPlaylist(target, tracksParam))
-                    }
-                    "p" -> {
-                        val pid = parts[1].toIntOrNull() ?: return respond(out, 400, "text/plain", "Bad pid".toByteArray())
-                        val target = decode(parts[2])
-                        respond(out, 200, "application/vnd.apple.mpegurl", rewritePlaylist(target, pid, audioOnly = false))
-                    }
-                    "a" -> {
-                        val pid = parts[1].toIntOrNull() ?: return respond(out, 400, "text/plain", "Bad pid".toByteArray())
-                        val target = decode(parts[2])
-                        respond(out, 200, "application/vnd.apple.mpegurl", rewritePlaylist(target, pid, audioOnly = true))
-                    }
-                    "s" -> {
-                        val pid = parts[1].toIntOrNull() ?: return respond(out, 400, "text/plain", "Bad pid".toByteArray())
-                        val target = decode(parts[2])
-                        streamSegment(target, pid, out, audioOnly = false)
-                    }
-                    "as" -> {
-                        val pid = parts[1].toIntOrNull() ?: return respond(out, 400, "text/plain", "Bad pid".toByteArray())
-                        val target = decode(parts[2])
-                        streamSegment(target, pid, out, audioOnly = true)
-                    }
+                    "p" -> respond(out, 200, "application/vnd.apple.mpegurl", rewritePlaylist(target, pid))
+                    "s" -> streamSegment(target, pid, out)
                     else -> respond(out, 404, "text/plain", "Not found".toByteArray())
                 }
             } catch (e: Exception) {
@@ -197,31 +156,39 @@ object CastleAudioProxy {
         val request = Request.Builder().url(url).apply {
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
-        app.baseClient.newCall(request).execute().use { res ->
-            if (!res.isSuccessful) return emptyList()
-            val rawIn = res.body?.byteStream() ?: return emptyList()
-            val input = BufferedInputStream(rawIn, INPUT_BUFFER_SIZE)
-            val packet = ByteArray(PACKET)
-            var pmtPid: Int? = null
+        val call = app.baseClient.newCall(request)
+        try {
+            call.execute().use { res ->
+                if (!res.isSuccessful) return emptyList()
+                val rawIn = res.body?.byteStream() ?: return emptyList()
+                val input = BufferedInputStream(rawIn, INPUT_BUFFER_SIZE)
+                val packet = ByteArray(PACKET)
+                var pmtPid: Int? = null
 
-            repeat(MAX_PROBE_PACKETS) {
-                if (readFully(input, packet) < PACKET) return emptyList()
-                if (u(packet, 0) == 0x47) {
-                    val pid = pidOf(packet, 0)
-                    if (pmtPid == null && pid == 0) {
-                        pmtPid = findPmtPid(packet)
-                    } else if (pmtPid != null && pid == pmtPid) {
-                        val streams = parsePmtAudioStreams(packet, 0)
-                        if (streams.isNotEmpty()) return streams
+                repeat(MAX_PROBE_PACKETS) {
+                    if (readFully(input, packet) < PACKET) return emptyList()
+                    if (u(packet, 0) == 0x47) {
+                        val pid = pidOf(packet, 0)
+                        if (pmtPid == null && pid == 0) {
+                            pmtPid = findPmtPid(packet)
+                        } else if (pmtPid != null && pid == pmtPid) {
+                            val streams = parsePmtAudioStreams(packet, 0)
+                            if (streams.isNotEmpty()) {
+                                call.cancel()
+                                return streams
+                            }
+                        }
                     }
                 }
+                return emptyList()
             }
-            return emptyList()
+        } finally {
+            call.cancel()
         }
     }
 
     /** Streams and filters a TS segment on-the-fly with instant seek cancellation and low latency. */
-    private fun streamSegment(url: String, keepPid: Int, rawOut: OutputStream, audioOnly: Boolean) {
+    private fun streamSegment(url: String, keepPid: Int, rawOut: OutputStream) {
         val request = Request.Builder().url(url).apply {
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
@@ -240,15 +207,15 @@ object CastleAudioProxy {
                     "Content-Type: video/mp2t\r\n" +
                     "Connection: close\r\n\r\n"
                 out.write(head.toByteArray(Charsets.US_ASCII))
-                out.flush()
+                out.flush() // Flush headers immediately so ExoPlayer starts preparing the decoder
 
                 val packet = ByteArray(PACKET)
                 val lookahead = ByteArrayOutputStream(8 * PACKET)
                 var pmtPid: Int? = null
-                var allPids: List<Int> = emptyList()
                 var audio: List<AudioStream> = emptyList()
                 var packetsRead = 0
 
+                // Buffer only until the first PMT packet is encountered (typically 2 packets = 376 bytes)
                 while (packetsRead < MAX_PROBE_PACKETS) {
                     val n = readFully(input, packet)
                     if (n <= 0) break
@@ -264,7 +231,6 @@ object CastleAudioProxy {
                             val parsed = parsePmtAudioStreams(packet, 0)
                             if (parsed.isNotEmpty()) {
                                 audio = parsed
-                                allPids = parseAllElementaryPids(packet, 0)
                                 break
                             }
                         }
@@ -277,17 +243,13 @@ object CastleAudioProxy {
 
                 val shouldFilter = pmtPid != null && audio.any { it.pid == keepPid }
                 val drop = if (shouldFilter) {
-                    if (audioOnly && allPids.isNotEmpty()) {
-                        // Drop both video and other audio PIDs so the secondary rendition only streams audio
-                        allPids.filter { it != keepPid }.toSet()
-                    } else {
-                        audio.asSequence().map { it.pid }.filter { it != keepPid }.toSet()
-                    }
+                    audio.asSequence().map { it.pid }.filter { it != keepPid }.toSet()
                 } else {
                     emptySet()
                 }
                 val resolvedPmtPid = pmtPid ?: -1
 
+                // Flush initial buffered packets immediately so the player gets the PAT/PMT and first keyframe fast
                 if (initialBytes.isNotEmpty()) {
                     if (shouldFilter) {
                         writeFilteredBuffer(initialBytes, resolvedPmtPid, drop, out)
@@ -297,6 +259,7 @@ object CastleAudioProxy {
                     out.flush()
                 }
 
+                // Stream remaining packets directly to the player without extra allocations
                 while (true) {
                     val n = readFully(input, packet)
                     if (n <= 0) break
@@ -316,6 +279,7 @@ object CastleAudioProxy {
                 out.flush()
             }
         } catch (e: Exception) {
+            // Player closed socket (e.g. user seeked to another timestamp): cancel upstream download immediately
             call.cancel()
             throw e
         }
@@ -352,47 +316,17 @@ object CastleAudioProxy {
         }
     }
 
-    private fun buildMasterPlaylist(playlistUrl: String, tracksParam: String): ByteArray {
-        val port = port()
-        val encodedUrl = encode(playlistUrl)
-        val entries = tracksParam.split(',').mapNotNull { item ->
-            val p = item.split(':')
-            if (p.size < 3) null else Triple(p[0].toIntOrNull() ?: return@mapNotNull null, p[1], decode(p[2]))
-        }
-        if (entries.isEmpty()) return rewritePlaylist(playlistUrl, 0, audioOnly = false)
-
-        val sb = StringBuilder()
-        sb.append("#EXTM3U\n")
-        sb.append("#EXT-X-VERSION:3\n")
-
-        entries.forEachIndexed { index, (pid, lang, name) ->
-            val isDefault = if (index == 0) "YES" else "NO"
-            val audioUri = "http://127.0.0.1:$port/a/$pid/$encodedUrl/audio.m3u8"
-            sb.append(
-                "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",LANGUAGE=\"$lang\",NAME=\"$name\",DEFAULT=$isDefault,AUTOSELECT=YES,URI=\"$audioUri\"\n"
-            )
-        }
-
-        val defaultPid = entries.first().first
-        val videoUri = "http://127.0.0.1:$port/p/$defaultPid/$encodedUrl/index.m3u8"
-        sb.append("#EXT-X-STREAM-INF:BANDWIDTH=2500000,AUDIO=\"audio\"\n")
-        sb.append("$videoUri\n")
-
-        return sb.toString().toByteArray(Charsets.UTF_8)
-    }
-
-    private fun rewritePlaylist(playlistUrl: String, pid: Int, audioOnly: Boolean): ByteArray {
+    private fun rewritePlaylist(playlistUrl: String, pid: Int): ByteArray {
         val port = port()
         val text = fetch(playlistUrl).toString(Charsets.UTF_8)
         val base = URL(playlistUrl)
-        val route = if (audioOnly) "as" else "s"
         return text.lineSequence().joinToString("\n") { line ->
             val t = line.trim()
             if (t.isEmpty() || t.startsWith("#")) {
                 line
             } else {
                 val abs = URL(base, t).toString()
-                "http://127.0.0.1:$port/$route/$pid/${encode(abs)}/seg.ts"
+                "http://127.0.0.1:$port/s/$pid/${encode(abs)}/seg.ts"
             }
         }.toByteArray(Charsets.UTF_8)
     }
@@ -449,23 +383,6 @@ object CastleAudioProxy {
             i += PACKET
         }
         return null
-    }
-
-    private fun parseAllElementaryPids(b: ByteArray, i: Int): List<Int> {
-        val s = sectionStart(b, i)
-        if (s < 0) return emptyList()
-        val out = mutableListOf<Int>()
-        val len = ((u(b, s + 1) and 0x0F) shl 8) or u(b, s + 2)
-        val pil = ((u(b, s + 10) and 0x0F) shl 8) or u(b, s + 11)
-        val end = minOf(s + 3 + len - 4, i + PACKET)
-        var j = s + 12 + pil
-        while (j + 5 <= end) {
-            val pid = ((u(b, j + 1) and 0x1F) shl 8) or u(b, j + 2)
-            val esLen = ((u(b, j + 3) and 0x0F) shl 8) or u(b, j + 4)
-            out.add(pid)
-            j += 5 + esLen
-        }
-        return out
     }
 
     private fun parsePmtAudioStreams(b: ByteArray, i: Int): List<AudioStream> {
@@ -534,7 +451,7 @@ object CastleAudioProxy {
         section.write(packet, s, 12 + pil)
         var j = s + 12 + pil
         while (j + 5 <= end) {
-            val pid = ((u(packet, j + 1) and 0x1F) shl 8) or u(b, j + 2)
+            val pid = ((u(packet, j + 1) and 0x1F) shl 8) or u(packet, j + 2)
             val esLen = ((u(packet, j + 3) and 0x0F) shl 8) or u(packet, j + 4)
             if (pid !in drop) section.write(packet, j, 5 + esLen)
             j += 5 + esLen
