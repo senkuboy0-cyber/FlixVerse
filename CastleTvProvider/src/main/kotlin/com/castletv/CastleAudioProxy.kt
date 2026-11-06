@@ -27,12 +27,7 @@ object CastleAudioProxy {
 
     data class AudioStream(val pid: Int, val language: String?)
 
-    // Stream types that are always audio. 0x06 (private PES) is NOT here: it is only audio when
-    // its descriptors say so (see isAudioStream). Some Castle videos list an empty 0x06 stream
-    // (no descriptor, no packets) that is not audio and must not become a fake "Audio N" language.
-    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x80, 0x81, 0x82, 0x86, 0x87)
-    // ISO-639 language (0x0A), AC-3 (0x6A), E-AC-3 (0x7A), DTS (0x7B), AAC (0x7C)
-    private val PRIVATE_AUDIO_DESCRIPTORS = setOf(0x0A, 0x6A, 0x7A, 0x7B, 0x7C)
+    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
     private const val PACKET = 188
     private const val IO_BUFFER_SIZE = 64 * 1024
     private const val MAX_PROBE_PACKETS = 128
@@ -151,25 +146,8 @@ object CastleAudioProxy {
         }.build()
         app.baseClient.newCall(request).execute().use { res ->
             if (!res.isSuccessful) throw IllegalStateException("HTTP ${res.code}")
-            val bytes = res.body?.bytes() ?: ByteArray(0)
-            return gunzipIfNeeded(bytes)
+            return res.body?.bytes() ?: ByteArray(0)
         }
-    }
-
-    /**
-     * Castle's CDN gzips playlists unconditionally (even with Accept-Encoding: identity).
-     * OkHttp only un-gzips when it added Accept-Encoding itself, so if upstreamHeaders carries
-     * its own Accept-Encoding/Range the body arrives still compressed. Detect the gzip magic.
-     */
-    private fun gunzipIfNeeded(b: ByteArray): ByteArray {
-        if (b.size > 2 && (b[0].toInt() and 0xFF) == 0x1F && (b[1].toInt() and 0xFF) == 0x8B) {
-            return try {
-                java.util.zip.GZIPInputStream(b.inputStream()).use { it.readBytes() }
-            } catch (_: Exception) {
-                b
-            }
-        }
-        return b
     }
 
     /** Reads only the initial packets of a segment until the PMT is found, avoiding full segment download. */
@@ -402,19 +380,16 @@ object CastleAudioProxy {
             val pid = ((u(b, j + 1) and 0x1F) shl 8) or u(b, j + 2)
             val esLen = ((u(b, j + 3) and 0x0F) shl 8) or u(b, j + 4)
             var lang: String? = null
-            var hasAudioDescriptor = false
             var k = j + 5
             while (k + 2 <= j + 5 + esLen && k + 2 <= end) {
                 val tag = u(b, k)
                 val dl = u(b, k + 1)
-                if (tag in PRIVATE_AUDIO_DESCRIPTORS) hasAudioDescriptor = true
                 if (tag == 0x0A && dl >= 3 && k + 5 <= end) {
                     lang = String(b, k + 2, 3, Charsets.US_ASCII)
                 }
                 k += 2 + dl
             }
-            val isAudio = type in AUDIO_TYPES || (type == 0x06 && hasAudioDescriptor)
-            if (isAudio) out.add(AudioStream(pid, lang))
+            if (type in AUDIO_TYPES) out.add(AudioStream(pid, lang))
             j += 5 + esLen
         }
         return out
