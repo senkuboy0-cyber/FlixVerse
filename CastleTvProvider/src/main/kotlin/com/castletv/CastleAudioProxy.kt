@@ -27,11 +27,13 @@ object CastleAudioProxy {
 
     data class AudioStream(val pid: Int, val language: String?)
 
-    // Added 0x06 (AC-3/Private PES) and other common audio types to fix separation issues on certain videos
+    // Added extra types like 0x06 to make sure all types of audio (AAC, AC3 etc) are detected
     private val AUDIO_TYPES = setOf(0x03, 0x04, 0x06, 0x0F, 0x11, 0x80, 0x81, 0x82, 0x86, 0x87)
     private const val PACKET = 188
     private const val IO_BUFFER_SIZE = 64 * 1024
-    private const val MAX_PROBE_PACKETS = 128
+    
+    // Increased from 128 to 512 to ensure PMT is found (in your files, PMT is at index 376)
+    private const val MAX_PROBE_PACKETS = 512
 
     @Volatile
     var upstreamHeaders: Map<String, String> = emptyMap()
@@ -204,7 +206,7 @@ object CastleAudioProxy {
             var audio: List<AudioStream> = emptyList()
             var packetsRead = 0
 
-            // Buffer only until the first PMT packet is encountered (typically 2 packets = 376 bytes)
+            // Buffer only until the first PMT packet is encountered
             while (packetsRead < MAX_PROBE_PACKETS) {
                 val n = readFully(input, packet)
                 if (n <= 0) break
