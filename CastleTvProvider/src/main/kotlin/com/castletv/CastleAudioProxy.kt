@@ -29,8 +29,7 @@ object CastleAudioProxy {
 
     private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
     private const val PACKET = 188
-    private const val INPUT_BUFFER_SIZE = 64 * 1024
-    private const val OUTPUT_BUFFER_SIZE = 8 * 1024
+    private const val IO_BUFFER_SIZE = 64 * 1024
     private const val MAX_PROBE_PACKETS = 128
 
     @Volatile
@@ -86,7 +85,7 @@ object CastleAudioProxy {
             try {
                 socket.soTimeout = 30_000
                 socket.tcpNoDelay = true
-                socket.sendBufferSize = OUTPUT_BUFFER_SIZE
+                socket.sendBufferSize = IO_BUFFER_SIZE
                 val path = readRequestPath(socket.getInputStream()) ?: return
                 val out = socket.getOutputStream()
                 // /p/{pid}/{url}/index.m3u8  or  /s/{pid}/{url}/seg.ts
@@ -156,132 +155,115 @@ object CastleAudioProxy {
         val request = Request.Builder().url(url).apply {
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
-        val call = app.baseClient.newCall(request)
-        try {
-            call.execute().use { res ->
-                if (!res.isSuccessful) return emptyList()
-                val rawIn = res.body?.byteStream() ?: return emptyList()
-                val input = BufferedInputStream(rawIn, INPUT_BUFFER_SIZE)
-                val packet = ByteArray(PACKET)
-                var pmtPid: Int? = null
+        app.baseClient.newCall(request).execute().use { res ->
+            if (!res.isSuccessful) return emptyList()
+            val rawIn = res.body?.byteStream() ?: return emptyList()
+            val input = BufferedInputStream(rawIn, IO_BUFFER_SIZE)
+            val packet = ByteArray(PACKET)
+            var pmtPid: Int? = null
 
-                repeat(MAX_PROBE_PACKETS) {
-                    if (readFully(input, packet) < PACKET) return emptyList()
-                    if (u(packet, 0) == 0x47) {
-                        val pid = pidOf(packet, 0)
-                        if (pmtPid == null && pid == 0) {
-                            pmtPid = findPmtPid(packet)
-                        } else if (pmtPid != null && pid == pmtPid) {
-                            val streams = parsePmtAudioStreams(packet, 0)
-                            if (streams.isNotEmpty()) {
-                                call.cancel()
-                                return streams
-                            }
-                        }
+            repeat(MAX_PROBE_PACKETS) {
+                if (readFully(input, packet) < PACKET) return emptyList()
+                if (u(packet, 0) == 0x47) {
+                    val pid = pidOf(packet, 0)
+                    if (pmtPid == null && pid == 0) {
+                        pmtPid = findPmtPid(packet)
+                    } else if (pmtPid != null && pid == pmtPid) {
+                        val streams = parsePmtAudioStreams(packet, 0)
+                        if (streams.isNotEmpty()) return streams
                     }
                 }
-                return emptyList()
             }
-        } finally {
-            call.cancel()
+            return emptyList()
         }
     }
 
-    /** Streams and filters a TS segment on-the-fly with instant seek cancellation and low latency. */
+    /** Streams and filters a TS segment on-the-fly with minimal memory allocation and low latency. */
     private fun streamSegment(url: String, keepPid: Int, rawOut: OutputStream) {
         val request = Request.Builder().url(url).apply {
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
-        val call = app.baseClient.newCall(request)
-        try {
-            call.execute().use { res ->
-                if (!res.isSuccessful) {
-                    respond(rawOut, 502, "text/plain", "HTTP ${res.code}".toByteArray())
-                    return
-                }
-                val rawIn = res.body?.byteStream() ?: return
-                val input = BufferedInputStream(rawIn, INPUT_BUFFER_SIZE)
-                val out = BufferedOutputStream(rawOut, OUTPUT_BUFFER_SIZE)
-
-                val head = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: video/mp2t\r\n" +
-                    "Connection: close\r\n\r\n"
-                out.write(head.toByteArray(Charsets.US_ASCII))
-                out.flush() // Flush headers immediately so ExoPlayer starts preparing the decoder
-
-                val packet = ByteArray(PACKET)
-                val lookahead = ByteArrayOutputStream(8 * PACKET)
-                var pmtPid: Int? = null
-                var audio: List<AudioStream> = emptyList()
-                var packetsRead = 0
-
-                // Buffer only until the first PMT packet is encountered (typically 2 packets = 376 bytes)
-                while (packetsRead < MAX_PROBE_PACKETS) {
-                    val n = readFully(input, packet)
-                    if (n <= 0) break
-                    lookahead.write(packet, 0, n)
-                    packetsRead++
-                    if (n < PACKET) break
-
-                    if (u(packet, 0) == 0x47) {
-                        val pid = pidOf(packet, 0)
-                        if (pmtPid == null && pid == 0) {
-                            pmtPid = findPmtPid(packet)
-                        } else if (pmtPid != null && pid == pmtPid) {
-                            val parsed = parsePmtAudioStreams(packet, 0)
-                            if (parsed.isNotEmpty()) {
-                                audio = parsed
-                                break
-                            }
-                        }
-                    }
-                }
-
-                val initialBytes = lookahead.toByteArray()
-                if (pmtPid == null) pmtPid = findPmtPid(initialBytes)
-                if (audio.isEmpty() && pmtPid != null) audio = audioStreams(initialBytes)
-
-                val shouldFilter = pmtPid != null && audio.any { it.pid == keepPid }
-                val drop = if (shouldFilter) {
-                    audio.asSequence().map { it.pid }.filter { it != keepPid }.toSet()
-                } else {
-                    emptySet()
-                }
-                val resolvedPmtPid = pmtPid ?: -1
-
-                // Flush initial buffered packets immediately so the player gets the PAT/PMT and first keyframe fast
-                if (initialBytes.isNotEmpty()) {
-                    if (shouldFilter) {
-                        writeFilteredBuffer(initialBytes, resolvedPmtPid, drop, out)
-                    } else {
-                        out.write(initialBytes)
-                    }
-                    out.flush()
-                }
-
-                // Stream remaining packets directly to the player without extra allocations
-                while (true) {
-                    val n = readFully(input, packet)
-                    if (n <= 0) break
-                    if (n < PACKET || !shouldFilter || u(packet, 0) != 0x47) {
-                        out.write(packet, 0, n)
-                        continue
-                    }
-                    val pid = pidOf(packet, 0)
-                    when {
-                        pid in drop -> Unit
-                        pid == resolvedPmtPid && isUnitStart(packet, 0) -> {
-                            out.write(rewritePmtPacket(packet, 0, drop))
-                        }
-                        else -> out.write(packet, 0, PACKET)
-                    }
-                }
-                out.flush()
+        app.baseClient.newCall(request).execute().use { res ->
+            if (!res.isSuccessful) {
+                respond(rawOut, 502, "text/plain", "HTTP ${res.code}".toByteArray())
+                return
             }
-        } catch (e: Exception) {
-            // Player closed socket (e.g. user seeked to another timestamp): cancel upstream download immediately
-            call.cancel()
-            throw e
+            val rawIn = res.body?.byteStream() ?: return
+            val input = BufferedInputStream(rawIn, IO_BUFFER_SIZE)
+            val out = BufferedOutputStream(rawOut, IO_BUFFER_SIZE)
+
+            val head = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: video/mp2t\r\n" +
+                "Connection: close\r\n\r\n"
+            out.write(head.toByteArray(Charsets.US_ASCII))
+
+            val packet = ByteArray(PACKET)
+            val lookahead = ByteArrayOutputStream(8 * PACKET)
+            var pmtPid: Int? = null
+            var audio: List<AudioStream> = emptyList()
+            var packetsRead = 0
+
+            // Buffer only until the first PMT packet is encountered (typically 2 packets = 376 bytes)
+            while (packetsRead < MAX_PROBE_PACKETS) {
+                val n = readFully(input, packet)
+                if (n <= 0) break
+                lookahead.write(packet, 0, n)
+                packetsRead++
+                if (n < PACKET) break
+
+                if (u(packet, 0) == 0x47) {
+                    val pid = pidOf(packet, 0)
+                    if (pmtPid == null && pid == 0) {
+                        pmtPid = findPmtPid(packet)
+                    } else if (pmtPid != null && pid == pmtPid) {
+                        val parsed = parsePmtAudioStreams(packet, 0)
+                        if (parsed.isNotEmpty()) {
+                            audio = parsed
+                            break
+                        }
+                    }
+                }
+            }
+
+            val initialBytes = lookahead.toByteArray()
+            if (pmtPid == null) pmtPid = findPmtPid(initialBytes)
+            if (audio.isEmpty() && pmtPid != null) audio = audioStreams(initialBytes)
+
+            val shouldFilter = pmtPid != null && audio.any { it.pid == keepPid }
+            val drop = if (shouldFilter) {
+                audio.asSequence().map { it.pid }.filter { it != keepPid }.toSet()
+            } else {
+                emptySet()
+            }
+            val resolvedPmtPid = pmtPid ?: -1
+
+            // Flush initial buffered packets
+            if (initialBytes.isNotEmpty()) {
+                if (shouldFilter) {
+                    writeFilteredBuffer(initialBytes, resolvedPmtPid, drop, out)
+                } else {
+                    out.write(initialBytes)
+                }
+            }
+
+            // Stream remaining packets directly to the player without extra allocations
+            while (true) {
+                val n = readFully(input, packet)
+                if (n <= 0) break
+                if (n < PACKET || !shouldFilter || u(packet, 0) != 0x47) {
+                    out.write(packet, 0, n)
+                    continue
+                }
+                val pid = pidOf(packet, 0)
+                when {
+                    pid in drop -> Unit
+                    pid == resolvedPmtPid && isUnitStart(packet, 0) -> {
+                        out.write(rewritePmtPacket(packet, 0, drop))
+                    }
+                    else -> out.write(packet, 0, PACKET)
+                }
+            }
+            out.flush()
         }
     }
 
