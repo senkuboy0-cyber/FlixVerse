@@ -9,7 +9,7 @@
             "senkuboy0-cyber"
         ],
         "description": "Castle TV Movies and Series Provider",
-        "fileSize": 123772,
+        "fileSize": 124225,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -18,7 +18,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/CastleTvProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-1dded62e0a6a5dd6b155e71ea96ad390dbecf1603b1904c1c6d49fb31545543e"
+        "fileHash": "sha256-3c15463c888a5c9bbf07cbd366144321891041e258d1acea6306c259ce32fbde"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/FourKHDHubProvider.cs3",
