@@ -30,7 +30,7 @@ object CastleAudioProxy {
     private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
     private const val PACKET = 188
     private const val IO_BUFFER_SIZE = 64 * 1024
-    private const val MAX_PROBE_PACKETS = 128
+    private const val MAX_PROBE_PACKETS = 1024
 
     @Volatile
     var upstreamHeaders: Map<String, String> = emptyMap()
@@ -246,21 +246,32 @@ object CastleAudioProxy {
                 }
             }
 
+            var skipNextPmtContinuation = false
+
             // Stream remaining packets directly to the player without extra allocations
             while (true) {
                 val n = readFully(input, packet)
                 if (n <= 0) break
                 if (n < PACKET || !shouldFilter || u(packet, 0) != 0x47) {
                     out.write(packet, 0, n)
+                    skipNextPmtContinuation = false
                     continue
                 }
                 val pid = pidOf(packet, 0)
                 when {
                     pid in drop -> Unit
-                    pid == resolvedPmtPid && isUnitStart(packet, 0) -> {
-                        out.write(rewritePmtPacket(packet, 0, drop))
+                    pid == resolvedPmtPid -> {
+                        if (isUnitStart(packet, 0)) {
+                            out.write(rewritePmtPacket(packet, 0, drop))
+                            skipNextPmtContinuation = true
+                        } else if (!skipNextPmtContinuation) {
+                            out.write(packet, 0, PACKET)
+                        }
                     }
-                    else -> out.write(packet, 0, PACKET)
+                    else -> {
+                        out.write(packet, 0, PACKET)
+                        skipNextPmtContinuation = false
+                    }
                 }
             }
             out.flush()
@@ -279,6 +290,8 @@ object CastleAudioProxy {
 
     private fun writeFilteredBuffer(b: ByteArray, pmt: Int, drop: Set<Int>, out: OutputStream) {
         var i = 0
+        var skipNextPmtContinuation = false
+
         while (i + PACKET <= b.size) {
             if (u(b, i) != 0x47) {
                 out.write(b, i, PACKET)
@@ -288,8 +301,18 @@ object CastleAudioProxy {
             val pid = pidOf(b, i)
             when {
                 pid in drop -> Unit
-                pid == pmt && isUnitStart(b, i) -> out.write(rewritePmtPacket(b, i, drop))
-                else -> out.write(b, i, PACKET)
+                pid == pmt -> {
+                    if (isUnitStart(b, i)) {
+                        out.write(rewritePmtPacket(b, i, drop))
+                        skipNextPmtContinuation = true
+                    } else if (!skipNextPmtContinuation) {
+                        out.write(b, i, PACKET)
+                    }
+                }
+                else -> {
+                    out.write(b, i, PACKET)
+                    skipNextPmtContinuation = false
+                }
             }
             i += PACKET
         }
@@ -424,20 +447,33 @@ object CastleAudioProxy {
         val packet = if (i == 0 && b.size == PACKET) b else b.copyOfRange(i, i + PACKET)
         val s = sectionStart(packet, 0)
         if (s < 0) return packet
+
         val len = ((u(packet, s + 1) and 0x0F) shl 8) or u(packet, s + 2)
-        if (s + 3 + len > PACKET) return packet // section spans packets: leave untouched
         val pil = ((u(packet, s + 10) and 0x0F) shl 8) or u(packet, s + 11)
-        val end = s + 3 + len - 4
+        
+        val end = minOf(s + 3 + len - 4, PACKET)
 
         val section = ByteArrayOutputStream()
-        section.write(packet, s, 12 + pil)
+        val headerLen = minOf(12 + pil, PACKET - s)
+        section.write(packet, s, headerLen)
+        
         var j = s + 12 + pil
         while (j + 5 <= end) {
             val pid = ((u(packet, j + 1) and 0x1F) shl 8) or u(packet, j + 2)
             val esLen = ((u(packet, j + 3) and 0x0F) shl 8) or u(packet, j + 4)
+            
+            if (j + 5 + esLen > PACKET) {
+                if (pid !in drop && j + 5 <= PACKET) {
+                    val safeEsLen = minOf(esLen, PACKET - (j + 5))
+                    section.write(packet, j, 5 + safeEsLen)
+                }
+                break
+            }
+            
             if (pid !in drop) section.write(packet, j, 5 + esLen)
             j += 5 + esLen
         }
+        
         val sec = section.toByteArray()
         val newLen = sec.size - 3 + 4
         sec[1] = ((u(sec, 1) and 0xF0) or ((newLen shr 8) and 0x0F)).toByte()
@@ -448,10 +484,13 @@ object CastleAudioProxy {
         System.arraycopy(packet, 0, result, 0, s)
         System.arraycopy(sec, 0, result, s, sec.size)
         val c = s + sec.size
-        result[c] = (crc ushr 24).toByte()
-        result[c + 1] = (crc ushr 16).toByte()
-        result[c + 2] = (crc ushr 8).toByte()
-        result[c + 3] = crc.toByte()
+        
+        if (c + 3 < PACKET) {
+            result[c] = (crc ushr 24).toByte()
+            result[c + 1] = (crc ushr 16).toByte()
+            result[c + 2] = (crc ushr 8).toByte()
+            result[c + 3] = crc.toByte()
+        }
         return result
     }
 
