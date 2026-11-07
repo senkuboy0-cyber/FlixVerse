@@ -27,10 +27,10 @@ object CastleAudioProxy {
 
     data class AudioStream(val pid: Int, val language: String?)
 
-    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
+    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8A)
     private const val PACKET = 188
     private const val IO_BUFFER_SIZE = 64 * 1024
-    private const val MAX_PROBE_PACKETS = 1024
+    private const val MAX_PROBE_PACKETS = 2048
 
     @Volatile
     var upstreamHeaders: Map<String, String> = emptyMap()
@@ -203,7 +203,7 @@ object CastleAudioProxy {
             var audio: List<AudioStream> = emptyList()
             var packetsRead = 0
 
-            // Buffer only until the first PMT packet is encountered (typically 2 packets = 376 bytes)
+            // Buffer only until the first PMT packet is encountered
             while (packetsRead < MAX_PROBE_PACKETS) {
                 val n = readFully(input, packet)
                 if (n <= 0) break
@@ -262,8 +262,14 @@ object CastleAudioProxy {
                     pid in drop -> Unit
                     pid == resolvedPmtPid -> {
                         if (isUnitStart(packet, 0)) {
+                            val s = sectionStart(packet, 0)
+                            if (s >= 0) {
+                                val len = ((u(packet, s + 1) and 0x0F) shl 8) or u(packet, s + 2)
+                                skipNextPmtContinuation = (s + 3 + len > PACKET)
+                            } else {
+                                skipNextPmtContinuation = false
+                            }
                             out.write(rewritePmtPacket(packet, 0, drop))
-                            skipNextPmtContinuation = true
                         } else if (!skipNextPmtContinuation) {
                             out.write(packet, 0, PACKET)
                         }
@@ -296,6 +302,7 @@ object CastleAudioProxy {
             if (u(b, i) != 0x47) {
                 out.write(b, i, PACKET)
                 i += PACKET
+                skipNextPmtContinuation = false
                 continue
             }
             val pid = pidOf(b, i)
@@ -303,8 +310,14 @@ object CastleAudioProxy {
                 pid in drop -> Unit
                 pid == pmt -> {
                     if (isUnitStart(b, i)) {
+                        val s = sectionStart(b, i)
+                        if (s >= 0) {
+                            val len = ((u(b, s + 1) and 0x0F) shl 8) or u(b, s + 2)
+                            skipNextPmtContinuation = (s + 3 + len > PACKET)
+                        } else {
+                            skipNextPmtContinuation = false
+                        }
                         out.write(rewritePmtPacket(b, i, drop))
-                        skipNextPmtContinuation = true
                     } else if (!skipNextPmtContinuation) {
                         out.write(b, i, PACKET)
                     }
@@ -397,6 +410,7 @@ object CastleAudioProxy {
         val len = ((u(b, s + 1) and 0x0F) shl 8) or u(b, s + 2)
         val pil = ((u(b, s + 10) and 0x0F) shl 8) or u(b, s + 11)
         val end = minOf(s + 3 + len - 4, i + PACKET)
+        
         var j = s + 12 + pil
         while (j + 5 <= end) {
             val type = u(b, j)
@@ -404,11 +418,20 @@ object CastleAudioProxy {
             val esLen = ((u(b, j + 3) and 0x0F) shl 8) or u(b, j + 4)
             var lang: String? = null
             var k = j + 5
+            
+            if (j + 5 + esLen > i + PACKET) break
+            
             while (k + 2 <= j + 5 + esLen && k + 2 <= end) {
                 val tag = u(b, k)
                 val dl = u(b, k + 1)
+                
                 if (tag == 0x0A && dl >= 3 && k + 5 <= end) {
                     lang = String(b, k + 2, 3, Charsets.US_ASCII)
+                } else if (lang == null && dl >= 3 && k + 5 <= end) {
+                    val pLang = String(b, k + 2, 3, Charsets.US_ASCII)
+                    if (pLang.all { it in 'a'..'z' || it in 'A'..'Z' }) {
+                        lang = pLang
+                    }
                 }
                 k += 2 + dl
             }
@@ -470,7 +493,9 @@ object CastleAudioProxy {
                 break
             }
             
-            if (pid !in drop) section.write(packet, j, 5 + esLen)
+            if (pid !in drop) {
+                section.write(packet, j, 5 + esLen)
+            }
             j += 5 + esLen
         }
         
