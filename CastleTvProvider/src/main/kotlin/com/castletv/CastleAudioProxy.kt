@@ -14,14 +14,23 @@ import java.net.Socket
 import java.net.URL
 import java.util.concurrent.Executors
 
+/**
+ * Castle TS segments carry every language as its own AAC stream inside one file.
+ * Media3 reads HLS TS by stream type, so it keeps only one AAC stream and the player
+ * never shows the other languages (androidx/media#2634, judged "bad media").
+ *
+ * This local proxy serves the playlist and its segments with the PMT rewritten to list
+ * only one chosen audio PID (other audio packets are dropped), so every language gets
+ * its own playable link in the internal player. No external app is needed.
+ */
 object CastleAudioProxy {
 
     data class AudioStream(val pid: Int, val language: String?)
 
-    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x8A)
+    private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
     private const val PACKET = 188
     private const val IO_BUFFER_SIZE = 64 * 1024
-    private const val MAX_PROBE_PACKETS = 2048
+    private const val MAX_PROBE_PACKETS = 128
 
     @Volatile
     var upstreamHeaders: Map<String, String> = emptyMap()
@@ -33,9 +42,13 @@ object CastleAudioProxy {
         Thread(r, "CastleAudioProxy").apply { isDaemon = true }
     }
 
+    // ===================== Public API =====================
+
+    /** Local playlist URL that plays [playlistUrl] with only [audioPid] as its audio. */
     fun playlistUrl(playlistUrl: String, audioPid: Int): String =
         "http://127.0.0.1:${port()}/p/$audioPid/${encode(playlistUrl)}/index.m3u8"
 
+    /** Audio streams listed in the PMT of the first segment of [playlistUrl]. */
     fun probe(playlistUrl: String): List<AudioStream> {
         return try {
             val playlist = fetch(playlistUrl).toString(Charsets.UTF_8)
@@ -47,6 +60,8 @@ object CastleAudioProxy {
             emptyList()
         }
     }
+
+    // ===================== Server =====================
 
     @Synchronized
     private fun port(): Int {
@@ -73,7 +88,7 @@ object CastleAudioProxy {
                 socket.sendBufferSize = IO_BUFFER_SIZE
                 val path = readRequestPath(socket.getInputStream()) ?: return
                 val out = socket.getOutputStream()
-                
+                // /p/{pid}/{url}/index.m3u8  or  /s/{pid}/{url}/seg.ts
                 val parts = path.trimStart('/').split('/')
                 if (parts.size < 3) return respond(out, 404, "text/plain", "Not found".toByteArray())
                 val pid = parts[1].toIntOrNull() ?: return respond(out, 400, "text/plain", "Bad pid".toByteArray())
@@ -103,6 +118,7 @@ object CastleAudioProxy {
             if (last4 == 0x0D0A0D0A) break
         }
         val firstLine = buf.toString("UTF-8").lineSequence().firstOrNull() ?: return null
+        // GET /path HTTP/1.1
         return firstLine.split(' ').getOrNull(1)?.substringBefore('?')
     }
 
@@ -122,9 +138,10 @@ object CastleAudioProxy {
         out.flush()
     }
 
+    // ===================== Upstream =====================
+
     private fun fetch(url: String): ByteArray {
         val request = Request.Builder().url(url).apply {
-            header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
         app.baseClient.newCall(request).execute().use { res ->
@@ -133,9 +150,9 @@ object CastleAudioProxy {
         }
     }
 
+    /** Reads only the initial packets of a segment until the PMT is found, avoiding full segment download. */
     private fun probeSegmentStreams(url: String): List<AudioStream> {
         val request = Request.Builder().url(url).apply {
-            header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
         app.baseClient.newCall(request).execute().use { res ->
@@ -161,9 +178,9 @@ object CastleAudioProxy {
         }
     }
 
+    /** Streams and filters a TS segment on-the-fly with minimal memory allocation and low latency. */
     private fun streamSegment(url: String, keepPid: Int, rawOut: OutputStream) {
         val request = Request.Builder().url(url).apply {
-            header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
         app.baseClient.newCall(request).execute().use { res ->
@@ -186,6 +203,7 @@ object CastleAudioProxy {
             var audio: List<AudioStream> = emptyList()
             var packetsRead = 0
 
+            // Buffer only until the first PMT packet is encountered (typically 2 packets = 376 bytes)
             while (packetsRead < MAX_PROBE_PACKETS) {
                 val n = readFully(input, packet)
                 if (n <= 0) break
@@ -219,6 +237,7 @@ object CastleAudioProxy {
             }
             val resolvedPmtPid = pmtPid ?: -1
 
+            // Flush initial buffered packets
             if (initialBytes.isNotEmpty()) {
                 if (shouldFilter) {
                     writeFilteredBuffer(initialBytes, resolvedPmtPid, drop, out)
@@ -227,37 +246,21 @@ object CastleAudioProxy {
                 }
             }
 
-            var skipNextPmtContinuation = false
-
+            // Stream remaining packets directly to the player without extra allocations
             while (true) {
                 val n = readFully(input, packet)
                 if (n <= 0) break
                 if (n < PACKET || !shouldFilter || u(packet, 0) != 0x47) {
                     out.write(packet, 0, n)
-                    skipNextPmtContinuation = false
                     continue
                 }
                 val pid = pidOf(packet, 0)
                 when {
                     pid in drop -> Unit
-                    pid == resolvedPmtPid -> {
-                        if (isUnitStart(packet, 0)) {
-                            val s = sectionStart(packet, 0)
-                            if (s >= 0) {
-                                val len = ((u(packet, s + 1) and 0x0F) shl 8) or u(packet, s + 2)
-                                skipNextPmtContinuation = (s + 3 + len > PACKET)
-                            } else {
-                                skipNextPmtContinuation = false
-                            }
-                            out.write(rewritePmtPacket(packet, 0, drop))
-                        } else if (!skipNextPmtContinuation) {
-                            out.write(packet, 0, PACKET)
-                        }
+                    pid == resolvedPmtPid && isUnitStart(packet, 0) -> {
+                        out.write(rewritePmtPacket(packet, 0, drop))
                     }
-                    else -> {
-                        out.write(packet, 0, PACKET)
-                        skipNextPmtContinuation = false
-                    }
+                    else -> out.write(packet, 0, PACKET)
                 }
             }
             out.flush()
@@ -276,36 +279,17 @@ object CastleAudioProxy {
 
     private fun writeFilteredBuffer(b: ByteArray, pmt: Int, drop: Set<Int>, out: OutputStream) {
         var i = 0
-        var skipNextPmtContinuation = false
-
         while (i + PACKET <= b.size) {
             if (u(b, i) != 0x47) {
                 out.write(b, i, PACKET)
                 i += PACKET
-                skipNextPmtContinuation = false
                 continue
             }
             val pid = pidOf(b, i)
             when {
                 pid in drop -> Unit
-                pid == pmt -> {
-                    if (isUnitStart(b, i)) {
-                        val s = sectionStart(b, i)
-                        if (s >= 0) {
-                            val len = ((u(b, s + 1) and 0x0F) shl 8) or u(b, s + 2)
-                            skipNextPmtContinuation = (s + 3 + len > PACKET)
-                        } else {
-                            skipNextPmtContinuation = false
-                        }
-                        out.write(rewritePmtPacket(b, i, drop))
-                    } else if (!skipNextPmtContinuation) {
-                        out.write(b, i, PACKET)
-                    }
-                }
-                else -> {
-                    out.write(b, i, PACKET)
-                    skipNextPmtContinuation = false
-                }
+                pid == pmt && isUnitStart(b, i) -> out.write(rewritePmtPacket(b, i, drop))
+                else -> out.write(b, i, PACKET)
             }
             i += PACKET
         }
@@ -337,12 +321,15 @@ object CastleAudioProxy {
     private fun decode(s: String): String =
         String(Base64.decode(s, B64_FLAGS), Charsets.UTF_8)
 
+    // ===================== MPEG-TS =====================
+
     private fun u(b: ByteArray, i: Int) = b[i].toInt() and 0xFF
 
     private fun pidOf(b: ByteArray, i: Int) = ((u(b, i + 1) and 0x1F) shl 8) or u(b, i + 2)
 
     private fun isUnitStart(b: ByteArray, i: Int) = (u(b, i + 1) and 0x40) != 0
 
+    /** Offset of the payload of the packet at [i], or -1 when it has none. */
     private fun payloadStart(b: ByteArray, i: Int): Int {
         val afc = (u(b, i + 3) shr 4) and 3
         if (afc == 0 || afc == 2) return -1
@@ -350,6 +337,7 @@ object CastleAudioProxy {
         return if (off < i + PACKET) off else -1
     }
 
+    /** Offset of the PSI section in the packet at [i] (after the pointer field), or -1. */
     private fun sectionStart(b: ByteArray, i: Int): Int {
         if (!isUnitStart(b, i)) return -1
         val o = payloadStart(b, i)
@@ -386,7 +374,6 @@ object CastleAudioProxy {
         val len = ((u(b, s + 1) and 0x0F) shl 8) or u(b, s + 2)
         val pil = ((u(b, s + 10) and 0x0F) shl 8) or u(b, s + 11)
         val end = minOf(s + 3 + len - 4, i + PACKET)
-        
         var j = s + 12 + pil
         while (j + 5 <= end) {
             val type = u(b, j)
@@ -394,13 +381,9 @@ object CastleAudioProxy {
             val esLen = ((u(b, j + 3) and 0x0F) shl 8) or u(b, j + 4)
             var lang: String? = null
             var k = j + 5
-            
-            if (j + 5 + esLen > i + PACKET) break
-            
             while (k + 2 <= j + 5 + esLen && k + 2 <= end) {
                 val tag = u(b, k)
                 val dl = u(b, k + 1)
-                
                 if (tag == 0x0A && dl >= 3 && k + 5 <= end) {
                     lang = String(b, k + 2, 3, Charsets.US_ASCII)
                 }
@@ -425,39 +408,36 @@ object CastleAudioProxy {
         return emptyList()
     }
 
+    /** Keep video and [keepPid] only: rewrite every PMT and drop packets of the other audio streams. */
+    private fun filterSegment(b: ByteArray, keepPid: Int): ByteArray {
+        val pmt = findPmtPid(b) ?: return b
+        val audio = audioStreams(b)
+        if (audio.none { it.pid == keepPid }) return b
+        val drop = audio.map { it.pid }.filter { it != keepPid }.toSet()
+
+        val out = ByteArrayOutputStream(b.size)
+        writeFilteredBuffer(b, pmt, drop, out)
+        return out.toByteArray()
+    }
+
     private fun rewritePmtPacket(b: ByteArray, i: Int, drop: Set<Int>): ByteArray {
         val packet = if (i == 0 && b.size == PACKET) b else b.copyOfRange(i, i + PACKET)
         val s = sectionStart(packet, 0)
         if (s < 0) return packet
-
         val len = ((u(packet, s + 1) and 0x0F) shl 8) or u(packet, s + 2)
+        if (s + 3 + len > PACKET) return packet // section spans packets: leave untouched
         val pil = ((u(packet, s + 10) and 0x0F) shl 8) or u(packet, s + 11)
-        
-        val end = minOf(s + 3 + len - 4, PACKET)
+        val end = s + 3 + len - 4
 
         val section = ByteArrayOutputStream()
-        val headerLen = minOf(12 + pil, PACKET - s)
-        section.write(packet, s, headerLen)
-        
+        section.write(packet, s, 12 + pil)
         var j = s + 12 + pil
         while (j + 5 <= end) {
             val pid = ((u(packet, j + 1) and 0x1F) shl 8) or u(packet, j + 2)
             val esLen = ((u(packet, j + 3) and 0x0F) shl 8) or u(packet, j + 4)
-            
-            if (j + 5 + esLen > PACKET) {
-                if (pid !in drop && j + 5 <= PACKET) {
-                    val safeEsLen = minOf(esLen, PACKET - (j + 5))
-                    section.write(packet, j, 5 + safeEsLen)
-                }
-                break
-            }
-            
-            if (pid !in drop) {
-                section.write(packet, j, 5 + esLen)
-            }
+            if (pid !in drop) section.write(packet, j, 5 + esLen)
             j += 5 + esLen
         }
-        
         val sec = section.toByteArray()
         val newLen = sec.size - 3 + 4
         sec[1] = ((u(sec, 1) and 0xF0) or ((newLen shr 8) and 0x0F)).toByte()
@@ -468,13 +448,10 @@ object CastleAudioProxy {
         System.arraycopy(packet, 0, result, 0, s)
         System.arraycopy(sec, 0, result, s, sec.size)
         val c = s + sec.size
-        
-        if (c + 3 < PACKET) {
-            result[c] = (crc ushr 24).toByte()
-            result[c + 1] = (crc ushr 16).toByte()
-            result[c + 2] = (crc ushr 8).toByte()
-            result[c + 3] = crc.toByte()
-        }
+        result[c] = (crc ushr 24).toByte()
+        result[c + 1] = (crc ushr 16).toByte()
+        result[c + 2] = (crc ushr 8).toByte()
+        result[c + 3] = crc.toByte()
         return result
     }
 
@@ -488,6 +465,8 @@ object CastleAudioProxy {
         }
         return crc
     }
+
+    // ===================== Language names =====================
 
     private val LANGUAGE_NAMES = mapOf(
         "hin" to "Hindi", "tam" to "Tamil", "tel" to "Telugu", "kan" to "Kannada",
