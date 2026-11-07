@@ -1,6 +1,7 @@
 {
   "name": "FlixVerse",
-  "description": "Your ultimate CloudStream repository for unlimited movies, TV series, and cinematic content from around the web.",
+  "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/assets/icons/transparency.png",
+  "description": "Cloudstream Extension Provider",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/builds/plugins.json"
