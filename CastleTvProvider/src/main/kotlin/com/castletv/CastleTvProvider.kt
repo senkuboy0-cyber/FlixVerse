@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import java.time.Instant
 import java.time.ZoneId
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -297,15 +298,23 @@ class CastleTvProvider : MainAPI() {
     /**
      * False for 403/404, so a quality missing on the CDN is never added.
      * Only the first bytes are requested; the CDN answers a missing file with an XML error.
+     * Brotli is handled explicitly: the CDN forces "Content-Encoding: br" on some cached
+     * playlists and ignores Accept-Encoding, and its garbage must not break the check
+     * (a truncated Brotli body cannot be decoded, which still never looks like an XML error).
      */
     private suspend fun isPlayableM3u8(url: String): Boolean {
         return try {
-            val res = app.get(
-                url,
-                headers = linkHeaders + mapOf("Range" to "bytes=0-511", "Accept-Encoding" to "identity"),
-                timeout = 12L,
-            )
-            (res.code == 200 || res.code == 206) && !res.text.trimStart().startsWith("<")
+            val request = Request.Builder().url(url).apply {
+                linkHeaders.forEach { (k, v) -> header(k, v) }
+                header("Range", "bytes=0-511")
+            }.build()
+            app.baseClient.newCall(request).execute().use { res ->
+                if (res.code != 200 && res.code != 206) return false
+                val raw = res.body?.bytes() ?: return false
+                val text = CastleAudioProxy.decodeIfBrotli(raw, res.header("Content-Encoding"))
+                    .toString(Charsets.UTF_8)
+                !text.trimStart().startsWith("<")
+            }
         } catch (_: Exception) {
             false
         }
@@ -392,12 +401,16 @@ class CastleTvProvider : MainAPI() {
 
                 val parts = CastleHls.parse(apiUrl)
                 if (parts == null) {
-                    // Unknown format: keep the signed URL as it is (stripping the query gives 403)
+                    // Unknown format: keep the signed URL as it is (stripping the query gives 403).
+                    // When the CDN forces Brotli on it, the player cannot read it either; serve it
+                    // as a plain passthrough (audioPid 0) through the local proxy instead.
                     val q = if (apiRes == 2) 720 else 480
                     if (seen.add("raw|$apiUrl")) {
+                        val passthrough = CastleAudioProxy.contentEncodingOf(apiUrl)?.contains("br") == true
+                        val linkUrl = if (passthrough) CastleAudioProxy.playlistUrl(apiUrl, 0) else apiUrl
                         callback.invoke(
-                            newExtractorLink(source = name, name = "$name $label", url = apiUrl, type = ExtractorLinkType.M3U8) {
-                                this.headers = linkHeaders
+                            newExtractorLink(source = name, name = "$name $label", url = linkUrl, type = ExtractorLinkType.M3U8) {
+                                if (!passthrough) this.headers = linkHeaders
                                 this.quality = q
                             }
                         )
@@ -423,21 +436,36 @@ class CastleTvProvider : MainAPI() {
                 }
                 if (qualities.isEmpty()) continue
 
+                // The proxy fetches playlists and segments on behalf of the player, so it
+                // always needs the upstream headers (set them before probing).
+                CastleAudioProxy.upstreamHeaders = linkHeaders
+
                 // All languages are muxed into the same segments; the internal player reads only one.
                 // With more than one audio stream, serve one link per language through the local proxy.
-                val audio = CastleAudioProxy.probe(qualities.last().second)
+                val probe = CastleAudioProxy.probeFull(qualities.last().second)
+                val audio = probe.audio
+
                 if (audio.size <= 1) {
+                    // Single audio stream. Some cached playlists come Brotli-compressed from the
+                    // CDN (it ignores Accept-Encoding), which the player cannot decode: those are
+                    // served as a plain passthrough (audioPid 0 = nothing is filtered) through
+                    // the local proxy.
+                    val passthrough = probe.wasBrotli
                     for ((q, url) in qualities) {
                         callback.invoke(
-                            newExtractorLink(source = name, name = "$name $label", url = url, type = ExtractorLinkType.M3U8) {
-                                this.headers = linkHeaders
+                            newExtractorLink(
+                                source = name,
+                                name = "$name $label",
+                                url = if (passthrough) CastleAudioProxy.playlistUrl(url, 0) else url,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                if (!passthrough) this.headers = linkHeaders
                                 this.quality = q
                             }
                         )
                         any = true
                     }
                 } else {
-                    CastleAudioProxy.upstreamHeaders = linkHeaders
                     audio.forEachIndexed { index, stream ->
                         val language = CastleAudioProxy.languageName(stream.language, index)
                         for ((q, url) in qualities) {

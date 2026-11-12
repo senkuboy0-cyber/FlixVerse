@@ -3,6 +3,8 @@ package com.castletv
 import android.util.Base64
 import com.lagradost.cloudstream3.app
 import okhttp3.Request
+import okhttp3.Response
+import org.brotli.dec.BrotliInputStream
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -22,10 +24,18 @@ import java.util.concurrent.Executors
  * This local proxy serves the playlist and its segments with the PMT rewritten to list
  * only one chosen audio PID (other audio packets are dropped), so every language gets
  * its own playable link in the internal player. No external app is needed.
+ *
+ * Playlists can also be routed through this proxy as a plain passthrough: the CDN
+ * sometimes forces Brotli on them ("Content-Encoding: br", Accept-Encoding ignored),
+ * which neither the player nor OkHttp can decode. With audioPid 0 nothing is filtered,
+ * the playlist is just decoded and the segments are streamed unchanged.
  */
 object CastleAudioProxy {
 
     data class AudioStream(val pid: Int, val language: String?)
+
+    /** Probe outcome: audio streams of the first segment + whether the playlist was Brotli-compressed. */
+    data class ProbeResult(val audio: List<AudioStream>, val wasBrotli: Boolean)
 
     private val AUDIO_TYPES = setOf(0x03, 0x04, 0x0F, 0x11, 0x81, 0x87)
     private const val PACKET = 188
@@ -44,20 +54,73 @@ object CastleAudioProxy {
 
     // ===================== Public API =====================
 
-    /** Local playlist URL that plays [playlistUrl] with only [audioPid] as its audio. */
+    /** Local playlist URL that plays [playlistUrl] with only [audioPid] as its audio.
+     *  audioPid 0 matches no audio stream, so nothing is filtered (plain passthrough). */
     fun playlistUrl(playlistUrl: String, audioPid: Int): String =
         "http://127.0.0.1:${port()}/p/$audioPid/${encode(playlistUrl)}/index.m3u8"
 
     /** Audio streams listed in the PMT of the first segment of [playlistUrl]. */
-    fun probe(playlistUrl: String): List<AudioStream> {
+    fun probe(playlistUrl: String): List<AudioStream> = probeFull(playlistUrl).audio
+
+    /**
+     * Same as [probe], but also reports whether the CDN served the playlist
+     * Brotli-compressed. Such a playlist is unreadable for the player, so the caller
+     * can route the links through this proxy as a plain passthrough instead.
+     */
+    fun probeFull(playlistUrl: String): ProbeResult {
         return try {
-            val playlist = fetch(playlistUrl).toString(Charsets.UTF_8)
+            val (bytes, brotli) = fetchWithInfo(playlistUrl)
+            val playlist = bytes.toString(Charsets.UTF_8)
+            if (!looksLikePlaylist(playlist)) return ProbeResult(emptyList(), brotli)
             val first = playlist.lineSequence().map { it.trim() }
-                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: return emptyList()
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: return ProbeResult(emptyList(), brotli)
             val segmentUrl = URL(URL(playlistUrl), first).toString()
-            probeSegmentStreams(segmentUrl)
-        } catch (e: Exception) {
-            emptyList()
+            ProbeResult(probeSegmentStreams(segmentUrl), brotli)
+        } catch (_: Exception) {
+            ProbeResult(emptyList(), false)
+        }
+    }
+
+    // ===================== Content decoding =====================
+
+    /**
+     * The CDN sometimes serves cached playlists with "Content-Encoding: br" and ignores
+     * Accept-Encoding entirely; OkHttp only decodes gzip itself, so Brotli is decoded here.
+     */
+    fun decodeIfBrotli(data: ByteArray, contentEncoding: String?): ByteArray {
+        if (contentEncoding?.lowercase()?.contains("br") != true) return data
+        return try {
+            BrotliInputStream(data.inputStream()).use { it.readBytes() }
+        } catch (_: Exception) {
+            data
+        }
+    }
+
+    /** True when the text looks like a usable HLS playlist. */
+    fun looksLikePlaylist(text: String): Boolean =
+        text.contains("#EXTM3U") || text.contains("#EXTINF")
+
+    /** Response body stream with Brotli decoding when the CDN sent "Content-Encoding: br". */
+    private fun decodedStream(res: Response, raw: InputStream): InputStream =
+        if (res.header("Content-Encoding")?.lowercase()?.contains("br") == true) {
+            try { BrotliInputStream(raw) } catch (_: Exception) { raw }
+        } else raw
+
+    /**
+     * Content-Encoding the CDN uses for [url], or null when it cannot be fetched.
+     * A small Range request is enough to see the response headers only.
+     */
+    fun contentEncodingOf(url: String): String? {
+        return try {
+            val request = Request.Builder().url(url).apply {
+                upstreamHeaders.forEach { (k, v) -> header(k, v) }
+                header("Range", "bytes=0-63")
+            }.build()
+            app.baseClient.newCall(request).execute().use { res ->
+                if (!res.isSuccessful) null else res.header("Content-Encoding")?.lowercase()
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -140,13 +203,17 @@ object CastleAudioProxy {
 
     // ===================== Upstream =====================
 
-    private fun fetch(url: String): ByteArray {
+    private fun fetch(url: String): ByteArray = fetchWithInfo(url).first
+
+    /** Fetch [url] and also report whether the CDN served the body Brotli-compressed. */
+    private fun fetchWithInfo(url: String): Pair<ByteArray, Boolean> {
         val request = Request.Builder().url(url).apply {
             upstreamHeaders.forEach { (k, v) -> header(k, v) }
         }.build()
         app.baseClient.newCall(request).execute().use { res ->
             if (!res.isSuccessful) throw IllegalStateException("HTTP ${res.code}")
-            return res.body?.bytes() ?: ByteArray(0)
+            val brotli = res.header("Content-Encoding")?.lowercase()?.contains("br") == true
+            return decodeIfBrotli(res.body?.bytes() ?: ByteArray(0), res.header("Content-Encoding")) to brotli
         }
     }
 
@@ -158,7 +225,7 @@ object CastleAudioProxy {
         app.baseClient.newCall(request).execute().use { res ->
             if (!res.isSuccessful) return emptyList()
             val rawIn = res.body?.byteStream() ?: return emptyList()
-            val input = BufferedInputStream(rawIn, IO_BUFFER_SIZE)
+            val input = BufferedInputStream(decodedStream(res, rawIn), IO_BUFFER_SIZE)
             val packet = ByteArray(PACKET)
             var pmtPid: Int? = null
 
@@ -189,7 +256,7 @@ object CastleAudioProxy {
                 return
             }
             val rawIn = res.body?.byteStream() ?: return
-            val input = BufferedInputStream(rawIn, IO_BUFFER_SIZE)
+            val input = BufferedInputStream(decodedStream(res, rawIn), IO_BUFFER_SIZE)
             val out = BufferedOutputStream(rawOut, IO_BUFFER_SIZE)
 
             val head = "HTTP/1.1 200 OK\r\n" +
@@ -301,6 +368,7 @@ object CastleAudioProxy {
     private fun rewritePlaylist(playlistUrl: String, pid: Int): ByteArray {
         val port = port()
         val text = fetch(playlistUrl).toString(Charsets.UTF_8)
+        if (!looksLikePlaylist(text)) throw IllegalStateException("Not an HLS playlist")
         val base = URL(playlistUrl)
         return text.lineSequence().joinToString("\n") { line ->
             val t = line.trim()

@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 46
+version = 47
 
 android {
     // Root build sets namespace "com.anime"; override so BuildConfig is generated in com.castletv
@@ -19,6 +19,9 @@ dependencies {
     val implementation by configurations
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("com.google.android.material:material:1.14.0")
+    // Pure-Java Brotli decoder: the CDN forces "Content-Encoding: br" on cached
+    // playlists and ignores Accept-Encoding, while OkHttp only decodes gzip itself
+    implementation("org.brotli:dec:0.1.2")
 }
 
 cloudstream {
