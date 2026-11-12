@@ -15,7 +15,7 @@ class CastleTvProviderPlugin : Plugin() {
         registerMainAPI(CastleTvProvider())
         openSettings = { ctx ->
             val activity = ctx as? AppCompatActivity
-            activity?.let { SettingsFragment(this, sharedPref).show(it.supportFragmentManager, "CastleSettings") }
+            activity?.let { SettingsFragment(sharedPref).show(it.supportFragmentManager, "CastleSettings") }
         }
     }
 }
