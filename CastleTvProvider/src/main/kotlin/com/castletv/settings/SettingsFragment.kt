@@ -568,15 +568,14 @@ class SettingsFragment(
             addView(input)
         }
         AlertDialog.Builder(ctx)
-            .setTitle("Home page name")
-            .setMessage("Empty = default name (${sec.title})")
+            .setTitle("Rename")
             .setView(box)
-            .setPositiveButton("OK") { _, _ ->
+            .setPositiveButton("Save") { _, _ ->
                 st.name = input.text.toString().trim().takeIf { it.isNotEmpty() && it != sec.title }
                 titleView.text = CastleSections.titleOf(st)
                 markDirty()
             }
-            .setNeutralButton("Default") { _, _ ->
+            .setNeutralButton("Reset name") { _, _ ->
                 st.name = null
                 titleView.text = CastleSections.titleOf(st)
                 markDirty()
@@ -599,7 +598,7 @@ class SettingsFragment(
         dirty = false
         AlertDialog.Builder(requireContext())
             .setTitle("Changes saved")
-            .setMessage("Restart the app now so the home page picks them up?")
+            .setMessage("Restart the app to apply?")
             .setPositiveButton("Restart") { _, _ ->
                 dismiss()
                 restartApp()
@@ -610,13 +609,15 @@ class SettingsFragment(
 
     private fun confirmReset() {
         AlertDialog.Builder(requireContext())
-            .setTitle("Reset sections?")
-            .setMessage("Order, ticks and custom names go back to default. Press Save to apply.")
+            .setTitle("Reset sections")
             .setPositiveButton("Reset") { _, _ ->
                 state.clear()
                 state.addAll(CastleSections.ALL.map { CastleSections.State(it.key, it.isDefault) })
+                // Defaults apply right away — no extra Save step to explain
+                CastleSections.save(state)
+                dirty = false
+                saveButton.alpha = 0.55f
                 buildRows()
-                markDirty()
             }
             .setNegativeButton("Cancel", null)
             .show()
