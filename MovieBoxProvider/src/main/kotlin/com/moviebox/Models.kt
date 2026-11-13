@@ -193,8 +193,59 @@ object MovieBoxApi {
     suspend fun resourcePosition(id: String, resourceId: String) =
         get("$BFF/subject-api/resource-position?subjectId=$id&resourceId=$resourceId&failUrl=x&failCode=404&resourceNum=0")
 
-    suspend fun playInfo(id: String, se: Int, ep: Int) =
-        get("$BFF/subject-api/play-info?subjectId=$id&se=$se&ep=$ep")
+    /**
+     * play-info streams are served per edge node: at the same moment one host can return
+     * only the 900-second preview manifest (or no streams at all) while the other hosts
+     * return the full one. Since the first successful host used to win, the default host
+     * (api3) sometimes hid the DASH/HLS streams behind a preview. This walks the hosts
+     * until one serves a usable (non placeholder, non preview) stream list.
+     */
+    private fun hasUsableStream(data: JsonNode?): Boolean =
+        data?.get("streams")?.toList().orEmpty().any {
+            !MovieBoxUtils.isPlaceholder(it["url"]?.asText(), it["duration"]?.asInt())
+        }
+
+    private suspend fun playInfoAcrossHosts(path: String): JsonNode? {
+        var fallback: JsonNode? = null
+        for (attempt in 0..1) {
+            val token = token()
+            var refreshed = false
+            for (host in hostOrder()) {
+                val url = host + path
+                try {
+                    val res = app.get(url, headers = headers("GET", url, null, token))
+                    saveFromHeader(res.headers["x-user"])
+                    if (res.code == 401 || res.code == 441) { clearToken(); refreshed = true; continue }
+                    if (res.code >= 500 || res.code == 403) continue
+                    val root = mapper.readTree(res.text)
+                    val code = root["code"]?.asInt() ?: 0
+                    if (code == 401 || code == 441) { clearToken(); refreshed = true; continue }
+                    val data = root["data"] ?: continue
+                    if (fallback == null) fallback = data
+                    if (hasUsableStream(data)) return data
+                } catch (_: Exception) { continue }
+            }
+            if (!refreshed) break
+        }
+        return fallback
+    }
+
+    /**
+     * Reliable play-info for link loading. Host rotation first; when the episode-level
+     * call (se/ep) gives nothing usable and this is an episode, movie-typed subjects
+     * (season-info (0,0)) only serve their stream list at se=0&ep=0, so that variant
+     * is tried as well.
+     */
+    suspend fun playInfoReliable(id: String, se: Int, ep: Int): JsonNode? {
+        val data = playInfoAcrossHosts("$BFF/subject-api/play-info?subjectId=$id&se=$se&ep=$ep")
+        if (data != null && hasUsableStream(data)) return data
+        if (se != 0 || ep != 0) {
+            val level0 = playInfoAcrossHosts("$BFF/subject-api/play-info?subjectId=$id&se=0&ep=0")
+            if (level0 != null && hasUsableStream(level0)) return level0
+            return level0 ?: data
+        }
+        return data
+    }
 
     suspend fun streamCaptions(id: String, streamId: String) =
         get("$BFF/subject-api/get-stream-captions?subjectId=$id&streamId=$streamId")
