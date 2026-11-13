@@ -299,7 +299,7 @@ class MovieBoxProvider : MainAPI() {
             d["detailPath"]?.asText()?.let { webPaths.putIfAbsent(sid, it) }
         }
 
-        // DASH (.mpd, hevc) from the website for a language; MP4 stays from the app API
+        // Website DASH (.mpd, hevc) — sent for every language alongside the app and TV APIs
         suspend fun dashLinks(sid: String, language: String) {
             val path = webPaths[sid] ?: return
             MovieBoxWeb.dash(sid, path, season, episode).forEach { d ->
@@ -324,11 +324,9 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
-        // ---------- TV API: DASH, HLS, then its MP4 (another server, kept even if the same file) ----------
-        /** Returns true when the TV API gave a DASH for this language. */
-        suspend fun tvLinks(sid: String, language: String, tv: JsonNode?): Boolean {
-            if (tv == null) return false
-            var gotDash = false
+        // ---------- TV API (MovieBox TV): DASH, HLS, then its MP4 (another server, kept even if the same file) ----------
+        suspend fun tvLinks(sid: String, language: String, tv: JsonNode?) {
+            if (tv == null) return
             fun q(s: JsonNode) = s["resolution"]?.asText()?.filter { it.isDigit() }?.toIntOrNull()?.takeIf { it > 0 }
                 ?: s["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
             suspend fun send(url: String, label: String, type: ExtractorLinkType, quality: Int?, cookie: String?) {
@@ -349,13 +347,12 @@ class MovieBoxProvider : MainAPI() {
             streams.filter { !isHls(it) && (it["format"]?.asText().equals("DASH", true) || it["url"]?.asText()?.contains(".mpd") == true) }
                 .forEach { s ->
                     val url = s["url"]?.asText() ?: return@forEach
-                    gotDash = true
-                    send(url, "$name $language DASH", ExtractorLinkType.DASH, q(s), s["signCookie"]?.asText())
+                    send(url, "$name TV $language DASH", ExtractorLinkType.DASH, q(s), s["signCookie"]?.asText())
                 }
             // 2) HLS (highest first)
             streams.filter { isHls(it) }.sortedByDescending { q(it) ?: 0 }.forEach { s ->
                 val url = s["url"]?.asText() ?: return@forEach
-                send(url, "$name $language HLS", ExtractorLinkType.M3U8, q(s), s["signCookie"]?.asText())
+                send(url, "$name TV $language HLS", ExtractorLinkType.M3U8, q(s), s["signCookie"]?.asText())
             }
             // 3) MP4 from the TV server (bcdnt)
             tv["resources"]?.forEach { r ->
@@ -363,15 +360,14 @@ class MovieBoxProvider : MainAPI() {
                 if (isPlaceholder(url)) return@forEach
                 send(url, "$name TV $language", ExtractorLinkType.VIDEO, q(r), null)
             }
-            return gotDash
         }
 
-        /** One language: app MP4 first, then TV DASH/HLS/MP4; website DASH only when TV gave none. */
+        /** One language: every link from the app API and the TV API, plus website DASH. No source is skipped. */
         suspend fun languageLinks(sid: String, language: String): Unit = coroutineScope {
             val tvJob = async { runCatching { MovieBoxTv.playInfo(sid, season, episode) }.getOrNull() }
             tryApp(sid, language)
-            val tvDash = tvLinks(sid, language, tvJob.await())
-            if (!tvDash) dashLinks(sid, language)
+            tvLinks(sid, language, tvJob.await())
+            dashLinks(sid, language)
             Unit
         }
 

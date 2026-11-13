@@ -330,9 +330,10 @@ object MovieBoxTv {
 
 // ===================== Helpers =====================
 object MovieBoxUtils {
-    /** 23-second "Update now" clip the API returns instead of the real video. */
+    /** 23-second "Update now" clip the API returns instead of the real video, and /preview/ 15-minute sample manifests. */
     fun isPlaceholder(url: String?, durationSec: Int? = null): Boolean =
         url.isNullOrBlank() || url.contains("macdn.aoneroom.com/other/") ||
+                url.contains("/preview/") ||
                 (durationSec != null && durationSec in 1..60)
 
     private val special = mapOf("esla" to "Spanish (LA)", "ptbr" to "Portuguese (BR)")

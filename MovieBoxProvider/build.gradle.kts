@@ -1,5 +1,5 @@
 // use an integer for version numbers
-version = 20
+version = 21
 
 android {
     // Root build sets namespace "com.anime"; resources are looked up under com.moviebox
