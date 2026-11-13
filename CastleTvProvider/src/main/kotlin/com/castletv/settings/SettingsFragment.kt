@@ -5,21 +5,12 @@ import com.castletv.CastleSections
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ColorFilter
-import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.PixelFormat
-import android.graphics.RectF
-import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
@@ -27,6 +18,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -40,28 +32,17 @@ import androidx.fragment.app.DialogFragment
 /**
  * Castle TV settings, one full-screen screen built entirely in code (no XML, no emoji).
  * Opens directly on "Manage Sections": the home page categories can be shown or hidden,
- * reordered, renamed and filtered by tab or search. Changes live in memory until Save.
+ * reordered (arrow buttons), renamed (pencil) and filtered by tab or by the search box,
+ * which only opens when the toolbar search button is pressed.
+ * Changes live in memory until Save.
  *
- * Every icon is drawn with Canvas (IconDrawable / CheckCircleDrawable); all focusable
- * views have a visible focus ring so the screen works with a TV remote.
+ * Every icon is drawn with Canvas (SettingsIcons.kt); the palette and view helpers live
+ * in SettingsUi.kt. All focusable views have a visible focus ring so the screen works
+ * with a TV remote.
  */
 class SettingsFragment(
     private val sharedPref: SharedPreferences,
 ) : DialogFragment() {
-
-    // Dark palette shared by the whole screen.
-    private object C {
-        val BG = Color.parseColor("#0E0F13")
-        val SURFACE = Color.parseColor("#171A20")
-        val SURFACE_HI = Color.parseColor("#242833")
-        val STROKE = Color.parseColor("#2A2F38")
-        val TEXT = Color.parseColor("#F4F6F9")
-        val SUBTLE = Color.parseColor("#9AA1AD")
-        val FAINT = Color.parseColor("#6B7280")
-        val ACCENT = Color.parseColor("#4F8BFF")
-        val ACCENT_HI = Color.parseColor("#6FA0FF")
-        val DANGER = Color.parseColor("#E57373")
-    }
 
     private val state: MutableList<CastleSections.State> = CastleSections.load()
     private val rows = mutableListOf<View>()
@@ -72,26 +53,23 @@ class SettingsFragment(
     private lateinit var emptyBox: View
     private lateinit var counter: TextView
     private lateinit var saveButton: TextView
+    private lateinit var searchToggle: ImageView
+    private lateinit var searchCardView: View
+    private lateinit var searchField: EditText
     private lateinit var chipRow: LinearLayout
     private val chips = mutableListOf<Pair<TextView, String?>>() // view to tab key (null = ALL)
     private var dirty = false
 
     private fun dp(v: Int) = requireContext().dp(v)
-
     private fun text(s: String, size: Float, color: Int, bold: Boolean = false) =
-        TextView(requireContext()).apply {
-            text = s
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, size)
-            setTextColor(color)
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-        }
+        requireContext().text(s, size, color, bold)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setStyle(STYLE_NO_TITLE, 0)
     }
 
-    /** Full-screen window, dimmed nothing: the screen paints its own background. */
+    /** Full-screen window, nothing dimmed: the screen paints its own background. */
     override fun onStart() {
         super.onStart()
         dialog?.window?.apply {
@@ -111,7 +89,7 @@ class SettingsFragment(
         val column = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
 
         column.addView(toolbar(ctx))
-        column.addView(searchCard(ctx))
+        column.addView(searchCard(ctx)) // starts GONE, opened from the toolbar search button
         column.addView(chipsBar(ctx))
 
         val listScroll = ScrollView(ctx).apply {
@@ -130,7 +108,7 @@ class SettingsFragment(
         column.addView(bottomBar(ctx))
 
         val root = FrameLayout(ctx).apply {
-            background = ColorDrawable(C.BG)
+            background = ColorDrawable(SettingsTheme.BG)
             addView(column, FrameLayout.LayoutParams(contentWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
         }
 
@@ -138,55 +116,67 @@ class SettingsFragment(
         return root
     }
 
-    // ===================== UI parts =====================
+    // ===================== Toolbar =====================
 
-    /** Back arrow, title block and the shown/total counter. */
+    /** Back button, title block, the search toggle and the shown/total counter. */
     private fun toolbar(ctx: Context): View {
         val bar = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(14), dp(20), dp(10))
+            setPadding(dp(12), dp(14), dp(16), dp(10))
         }
-        bar.addView(iconButton(ctx, IconDrawable.Kind.BACK, C.SUBTLE, "Back") { dismiss() })
+        bar.addView(
+            iconButton(IconDrawable.Kind.BACK, SettingsTheme.SUBTLE, "Back") { dismiss() },
+            LinearLayout.LayoutParams(dp(40), dp(40)),
+        )
 
-        val titles = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
-        titles.addView(text("Manage Sections", 19f, C.TEXT, true))
-        titles.addView(text("CASTLE TV · HOME PAGE", 10f, C.FAINT).apply {
+        val titles = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), 0, 0, 0) }
+        titles.addView(text("Manage Sections", 19f, SettingsTheme.TEXT, true))
+        titles.addView(text("CASTLE TV · HOME PAGE", 10f, SettingsTheme.FAINT).apply {
             letterSpacing = 0.14f
             setPadding(0, dp(2), 0, 0)
         })
         bar.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        counter = text("", 12f, C.FAINT, true)
+        searchToggle = iconButton(IconDrawable.Kind.SEARCH, SettingsTheme.SUBTLE, "Search") { toggleSearch() }
+        bar.addView(searchToggle, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(10) })
+
+        counter = text("", 12f, SettingsTheme.FAINT, true)
         bar.addView(counter)
         return bar
     }
 
-    /** Search field, always visible; the cross clears the query. */
+    // ===================== Search (toggleable) =====================
+
+    /**
+     * Hidden by default. Opens from the toolbar search button; while it is open the
+     * magnifier stays highlighted. The cross inside clears the text, and once the text
+     * is already empty it closes the whole search bar again.
+     */
     private fun searchCard(ctx: Context): View {
         val clear = ImageView(ctx).apply {
-            setImageDrawable(IconDrawable(IconDrawable.Kind.CLEAR, C.SUBTLE))
+            setImageDrawable(IconDrawable(IconDrawable.Kind.CLEAR, SettingsTheme.SUBTLE))
             scaleType = ImageView.ScaleType.FIT_CENTER
             isClickable = true
             isFocusable = true
-            background = ghost(ctx, 12)
+            background = ctx.ghost(12)
             setPadding(dp(9), dp(9), dp(9), dp(9))
-            contentDescription = "Clear search"
-            visibility = View.GONE
+            contentDescription = "Clear or close search"
         }
 
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = shape(ctx, C.SURFACE, 14, 1, C.STROKE)
+            background = ctx.shape(SettingsTheme.SURFACE, 14, 1, SettingsTheme.STROKE)
             setPadding(dp(14), dp(4), dp(4), dp(4))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { setMargins(dp(16), dp(6), dp(16), dp(2)) }
+            visibility = View.GONE
         }
         card.addView(ImageView(ctx).apply {
-            setImageDrawable(IconDrawable(IconDrawable.Kind.SEARCH, C.FAINT))
+            setImageDrawable(IconDrawable(IconDrawable.Kind.SEARCH, SettingsTheme.FAINT))
             scaleType = ImageView.ScaleType.FIT_CENTER
         }, LinearLayout.LayoutParams(dp(20), dp(20)))
 
@@ -195,8 +185,8 @@ class SettingsFragment(
             setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT
             hint = "Search sections"
-            setHintTextColor(C.FAINT)
-            setTextColor(C.TEXT)
+            setHintTextColor(SettingsTheme.FAINT)
+            setTextColor(SettingsTheme.TEXT)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setPadding(dp(10), dp(12), dp(6), dp(12))
             addTextChangedListener(object : TextWatcher {
@@ -204,20 +194,64 @@ class SettingsFragment(
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun afterTextChanged(s: Editable?) {
                     query = s?.toString()?.trim().orEmpty()
-                    clear.visibility = if (query.isEmpty()) View.GONE else View.VISIBLE
                     applyFilter()
                 }
             })
         }
+        searchField = field
         card.addView(field, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         clear.setOnClickListener {
-            field.setText("")
-            field.requestFocus()
+            if (field.text.isNotEmpty()) {
+                field.setText("")
+                field.requestFocus()
+            } else {
+                closeSearch()
+            }
         }
         card.addView(clear, LinearLayout.LayoutParams(dp(36), dp(36)))
+
+        searchCardView = card
         return card
     }
+
+    /** Toolbar search button: show the field + keyboard, or hide it and reset the filter. */
+    private fun toggleSearch() {
+        if (searchCardView.visibility == View.VISIBLE) closeSearch() else openSearch()
+    }
+
+    private fun openSearch() {
+        searchCardView.visibility = View.VISIBLE
+        styleSearchToggle(true)
+        searchField.post {
+            searchField.requestFocus()
+            val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(searchField, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun closeSearch() {
+        val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(searchField.windowToken, 0)
+        searchCardView.visibility = View.GONE
+        styleSearchToggle(false)
+        if (searchField.text.isNotEmpty()) searchField.setText("") // resets the filter via the watcher
+        searchToggle.requestFocus()
+    }
+
+    private fun styleSearchToggle(active: Boolean) {
+        val ctx = requireContext()
+        searchToggle.setImageDrawable(
+            IconDrawable(IconDrawable.Kind.SEARCH, if (active) SettingsTheme.ACCENT_HI else SettingsTheme.SUBTLE)
+        )
+        searchToggle.background = if (active) {
+            ctx.shape(SettingsTheme.ACCENT_DIM, 12, 1, SettingsTheme.ACCENT)
+        } else {
+            ctx.buttonBg()
+        }
+    }
+
+    // ===================== Tab filter chips =====================
 
     /** Tab filter chips: ALL / HOME / SERIES / MOVIES / ANIME, in catalog order. */
     private fun chipsBar(ctx: Context): View {
@@ -228,7 +262,7 @@ class SettingsFragment(
         }
         chips.clear()
         fun chip(label: String, tab: String?) {
-            val c = text(label, 12f, C.SUBTLE, true).apply {
+            val c = text(label, 12f, SettingsTheme.SUBTLE, true).apply {
                 tag = tab
                 letterSpacing = 0.06f
                 setPadding(dp(16), dp(9), dp(16), dp(9))
@@ -269,15 +303,15 @@ class SettingsFragment(
         chips.forEach { (chip, tab) ->
             val selected = tab == tabFilter
             chip.background = if (selected) {
-                shape(requireContext(), C.ACCENT, 20, 2, Color.WHITE)
+                requireContext().shape(SettingsTheme.ACCENT, 20, 2, Color.WHITE)
             } else {
                 states(
-                    shape(requireContext(), C.SURFACE_HI, 20, 2, Color.WHITE),
-                    shape(requireContext(), C.SURFACE_HI, 20),
-                    shape(requireContext(), C.SURFACE, 20, 1, C.STROKE),
+                    requireContext().shape(SettingsTheme.SURFACE_HI, 20, 2, Color.WHITE),
+                    requireContext().shape(SettingsTheme.SURFACE_HI, 20),
+                    requireContext().shape(SettingsTheme.SURFACE, 20, 1, SettingsTheme.STROKE),
                 )
             }
-            chip.setTextColor(if (selected) Color.WHITE else C.SUBTLE)
+            chip.setTextColor(if (selected) Color.WHITE else SettingsTheme.SUBTLE)
         }
     }
 
@@ -290,13 +324,15 @@ class SettingsFragment(
             isClickable = false
         }
         box.addView(ImageView(ctx).apply {
-            setImageDrawable(IconDrawable(IconDrawable.Kind.SEARCH, C.STROKE))
+            setImageDrawable(IconDrawable(IconDrawable.Kind.SEARCH, SettingsTheme.STROKE))
             scaleType = ImageView.ScaleType.FIT_CENTER
         }, LinearLayout.LayoutParams(dp(64), dp(64)))
-        box.addView(text("No sections found", 15f, C.SUBTLE, true).apply { setPadding(0, dp(14), 0, 0) })
-        box.addView(text("Try another keyword or tab", 12f, C.FAINT).apply { setPadding(0, dp(3), 0, 0) })
+        box.addView(text("No sections found", 15f, SettingsTheme.SUBTLE, true).apply { setPadding(0, dp(14), 0, 0) })
+        box.addView(text("Try another keyword or tab", 12f, SettingsTheme.FAINT).apply { setPadding(0, dp(3), 0, 0) })
         return box
     }
+
+    // ===================== Bottom bar =====================
 
     /** Reset on the left, Cancel and Save on the right. */
     private fun bottomBar(ctx: Context): View {
@@ -304,7 +340,7 @@ class SettingsFragment(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(10), dp(16), dp(14))
-            background = ColorDrawable(C.BG)
+            background = ColorDrawable(SettingsTheme.BG)
         }
 
         val reset = LinearLayout(ctx).apply {
@@ -312,25 +348,25 @@ class SettingsFragment(
             gravity = Gravity.CENTER_VERTICAL
             isClickable = true
             isFocusable = true
-            background = ghost(ctx, 12)
+            background = ctx.ghost(12)
             setPadding(dp(14), dp(10), dp(16), dp(10))
             contentDescription = "Reset to defaults"
             addView(ImageView(ctx).apply {
-                setImageDrawable(IconDrawable(IconDrawable.Kind.RESET, C.DANGER))
+                setImageDrawable(IconDrawable(IconDrawable.Kind.RESET, SettingsTheme.DANGER))
                 scaleType = ImageView.ScaleType.FIT_CENTER
             }, LinearLayout.LayoutParams(dp(16), dp(16)))
-            addView(text("Reset", 14f, C.DANGER, true).apply { setPadding(dp(8), 0, 0, 0) })
+            addView(text("Reset", 14f, SettingsTheme.DANGER, true).apply { setPadding(dp(8), 0, 0, 0) })
             setOnClickListener { confirmReset() }
         }
         bar.addView(reset)
 
         bar.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
 
-        val cancel = text("Cancel", 14f, C.SUBTLE, true).apply {
+        val cancel = text("Cancel", 14f, SettingsTheme.SUBTLE, true).apply {
             setPadding(dp(18), dp(11), dp(18), dp(11))
             isClickable = true
             isFocusable = true
-            background = ghost(ctx, 12)
+            background = ctx.ghost(12)
             setOnClickListener { dismiss() }
         }
         bar.addView(cancel)
@@ -340,9 +376,9 @@ class SettingsFragment(
             isClickable = true
             isFocusable = true
             background = states(
-                shape(ctx, C.ACCENT, 12, 2, Color.WHITE),
-                shape(ctx, C.ACCENT_HI, 12),
-                shape(ctx, C.ACCENT, 12),
+                ctx.shape(SettingsTheme.ACCENT, 12, 2, Color.WHITE),
+                ctx.shape(SettingsTheme.ACCENT_HI, 12),
+                ctx.shape(SettingsTheme.ACCENT, 12),
             )
             alpha = if (dirty) 1f else 0.55f
             setOnClickListener { save() }
@@ -374,9 +410,9 @@ class SettingsFragment(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             background = states(
-                shape(ctx, C.SURFACE_HI, 16, 2, Color.WHITE),
-                shape(ctx, C.SURFACE_HI, 16),
-                shape(ctx, C.SURFACE, 16, 1, C.STROKE),
+                ctx.shape(SettingsTheme.SURFACE_HI, 16, 2, Color.WHITE),
+                ctx.shape(SettingsTheme.SURFACE_HI, 16),
+                ctx.shape(SettingsTheme.SURFACE, 16, 1, SettingsTheme.STROKE),
             )
             setPadding(dp(12), dp(10), dp(6), dp(10))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -386,7 +422,7 @@ class SettingsFragment(
         }
 
         // Toggle circle: filled accent with a check when shown, dark ring when hidden.
-        val toggle = CheckCircleDrawable(C.ACCENT, C.SURFACE_HI, C.FAINT, Color.WHITE)
+        val toggle = CheckCircleDrawable(SettingsTheme.ACCENT, SettingsTheme.SURFACE_HI, SettingsTheme.FAINT, Color.WHITE)
         toggle.checked = st.enabled
         val toggleView = ImageView(ctx).apply {
             setImageDrawable(toggle)
@@ -395,8 +431,13 @@ class SettingsFragment(
         row.addView(toggleView, LinearLayout.LayoutParams(dp(30), dp(30)))
 
         val texts = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(4), 0) }
-        val title = text(CastleSections.titleOf(st), 15f, C.TEXT, true)
-        val sub = text((if (isDefault) "Default · " else "") + (sec?.label ?: st.key), 11f, C.FAINT).apply {
+        val title = text(CastleSections.titleOf(st), 15f, SettingsTheme.TEXT, true).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        val sub = text((if (isDefault) "Default · " else "") + (sec?.label ?: st.key), 11f, SettingsTheme.FAINT).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
             setPadding(0, dp(2), 0, 0)
         }
         texts.addView(title)
@@ -416,24 +457,38 @@ class SettingsFragment(
             markDirty()
         }
 
+        // Rename + reorder buttons: explicit sizes and a visible disc background, so
+        // they can always be seen (previously they collapsed to zero and vanished).
         if (!isDefault) {
-            row.addView(iconButton(ctx, IconDrawable.Kind.PENCIL, C.SUBTLE, "Rename") { rename(st, title) })
+            row.addView(
+                iconButton(IconDrawable.Kind.PENCIL, SettingsTheme.SUBTLE, "Rename") { rename(st, title) },
+                rowIconParams(),
+            )
         } else {
-            row.addView(View(ctx), LinearLayout.LayoutParams(dp(38), 1))
+            row.addView(View(ctx), LinearLayout.LayoutParams(dp(40), 1))
         }
-        row.addView(iconButton(ctx, IconDrawable.Kind.CHEVRON_UP, C.SUBTLE, "Move up") { move(st, -1) }.apply { tag = "up" })
-        row.addView(iconButton(ctx, IconDrawable.Kind.CHEVRON_DOWN, C.SUBTLE, "Move down") { move(st, 1) }.apply { tag = "down" })
+        row.addView(
+            iconButton(IconDrawable.Kind.CHEVRON_UP, SettingsTheme.SUBTLE, "Move up") { move(st, -1) }.apply { tag = "up" },
+            rowIconParams(),
+        )
+        row.addView(
+            iconButton(IconDrawable.Kind.CHEVRON_DOWN, SettingsTheme.SUBTLE, "Move down") { move(st, 1) }.apply { tag = "down" },
+            rowIconParams(),
+        )
         return row
     }
 
-    private fun iconButton(ctx: Context, kind: IconDrawable.Kind, color: Int, description: String, onClick: () -> Unit): View =
-        ImageView(ctx).apply {
+    private fun rowIconParams() = LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(2) }
+
+    /** Small round button with a code-drawn icon; visible disc at rest, ring on focus. */
+    private fun iconButton(kind: IconDrawable.Kind, color: Int, description: String, onClick: () -> Unit): ImageView =
+        ImageView(requireContext()).apply {
             setImageDrawable(IconDrawable(kind, color))
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(dp(11), dp(11), dp(11), dp(11))
+            setPadding(dp(9), dp(9), dp(9), dp(9))
             isClickable = true
             isFocusable = true
-            background = ghost(ctx, 12)
+            background = requireContext().buttonBg()
             contentDescription = description
             setOnClickListener { onClick() }
         }
@@ -576,176 +631,4 @@ class SettingsFragment(
             Runtime.getRuntime().exit(0)
         }
     }
-}
-
-// ===================== Drawing helpers =====================
-
-private fun Context.dp(v: Int): Int =
-    TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
-
-private fun shape(ctx: Context, fill: Int, radius: Int, stroke: Int = 0, strokeColor: Int = 0) =
-    GradientDrawable().apply {
-        setColor(fill)
-        cornerRadius = ctx.dp(radius).toFloat()
-        if (stroke > 0) setStroke(ctx.dp(stroke), strokeColor)
-    }
-
-private fun states(focused: Drawable, pressed: Drawable?, normal: Drawable) = StateListDrawable().apply {
-    addState(intArrayOf(android.R.attr.state_focused), focused)
-    pressed?.let { addState(intArrayOf(android.R.attr.state_pressed), it) }
-    addState(intArrayOf(), normal)
-}
-
-/** Transparent button that shows a white ring on focus (TV remote friendly). */
-private fun ghost(ctx: Context, radius: Int = 12): Drawable = states(
-    shape(ctx, Color.parseColor("#33FFFFFF"), radius, 2, Color.WHITE),
-    shape(ctx, Color.parseColor("#33FFFFFF"), radius),
-    shape(ctx, Color.TRANSPARENT, radius),
-)
-
-/**
- * Line icons drawn with Canvas on a 24×24 grid: no XML vectors, no emoji, no font glyphs.
- * Stroke style: 2px round caps, similar to Feather/Lucide line icons.
- */
-class IconDrawable(private val kind: Kind, color: Int = Color.WHITE) : Drawable() {
-    enum class Kind { BACK, SEARCH, CLEAR, PENCIL, CHEVRON_UP, CHEVRON_DOWN, RESET, CHECK }
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-        strokeWidth = 2f
-        this.color = color
-    }
-
-    private fun line(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float) =
-        canvas.drawLine(x1, y1, x2, y2, paint)
-
-    override fun draw(canvas: Canvas) {
-        val b = bounds
-        val size = minOf(b.width(), b.height()).toFloat()
-        if (size <= 0f) return
-        canvas.save()
-        canvas.translate(b.left + (b.width() - size) / 2f, b.top + (b.height() - size) / 2f)
-        canvas.scale(size / 24f, size / 24f)
-        when (kind) {
-            Kind.BACK -> {
-                line(canvas, 20f, 12f, 5f, 12f)
-                line(canvas, 11f, 6f, 5f, 12f)
-                line(canvas, 11f, 18f, 5f, 12f)
-            }
-            Kind.SEARCH -> {
-                canvas.drawCircle(11f, 11f, 6.5f, paint)
-                line(canvas, 15.8f, 15.8f, 20.5f, 20.5f)
-            }
-            Kind.CLEAR -> {
-                line(canvas, 6.5f, 6.5f, 17.5f, 17.5f)
-                line(canvas, 17.5f, 6.5f, 6.5f, 17.5f)
-            }
-            Kind.PENCIL -> {
-                // Body + rounded tip (Feather "edit-2")
-                val pencil = Path().apply {
-                    moveTo(17f, 3f)
-                    arcTo(RectF(16.17f, 2.17f, 21.83f, 7.83f), 225f, 180f)
-                    lineTo(7.5f, 20.5f)
-                    lineTo(2f, 22f)
-                    lineTo(3.5f, 16.5f)
-                    close()
-                }
-                canvas.drawPath(pencil, paint)
-            }
-            Kind.CHEVRON_UP -> {
-                line(canvas, 6f, 14.5f, 12f, 8.5f)
-                line(canvas, 12f, 8.5f, 18f, 14.5f)
-            }
-            Kind.CHEVRON_DOWN -> {
-                line(canvas, 6f, 9.5f, 12f, 15.5f)
-                line(canvas, 12f, 15.5f, 18f, 9.5f)
-            }
-            Kind.RESET -> {
-                // Open circle with an arrow head at the gap (refresh / undo)
-                canvas.drawArc(RectF(4.5f, 4.5f, 19.5f, 19.5f), 60f, 280f, false, paint)
-                val endAngle = Math.toRadians(340.0)
-                val ex = 12f + 7.5f * Math.cos(endAngle).toFloat()
-                val ey = 12f + 7.5f * Math.sin(endAngle).toFloat()
-                // Two wings pointing back along the arc direction (tangent at 340° is 70°)
-                listOf(215.0, 285.0).forEach { deg ->
-                    val a = Math.toRadians(deg)
-                    line(canvas, ex, ey, ex + 4f * Math.cos(a).toFloat(), ey + 4f * Math.sin(a).toFloat())
-                }
-            }
-            Kind.CHECK -> {
-                line(canvas, 5f, 12.5f, 10f, 17.5f)
-                line(canvas, 10f, 17.5f, 19f, 7f)
-            }
-        }
-        canvas.restore()
-    }
-
-    override fun setAlpha(alpha: Int) { paint.alpha = alpha; invalidateSelf() }
-    override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter; invalidateSelf() }
-    @Deprecated("Deprecated in Java")
-    override fun getOpacity() = PixelFormat.TRANSLUCENT
-}
-
-/** Round toggle: accent disc with a check when on, dark disc with a ring when off. */
-class CheckCircleDrawable(
-    private val onColor: Int,
-    private val offFill: Int,
-    private val offRing: Int,
-    private val checkColor: Int,
-) : Drawable() {
-
-    var checked: Boolean = false
-        set(value) { field = value; invalidateSelf() }
-
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2f
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val check = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2.5f
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-        color = checkColor
-    }
-
-    override fun draw(canvas: Canvas) {
-        val b = bounds
-        val size = minOf(b.width(), b.height()).toFloat()
-        if (size <= 0f) return
-        val cx = b.left + b.width() / 2f
-        val cy = b.top + b.height() / 2f
-        val r = size * 0.42f
-        if (checked) {
-            fill.color = onColor
-            canvas.drawCircle(cx, cy, r, fill)
-            val s = size / 24f
-            canvas.save()
-            canvas.translate(cx - 12f * s, cy - 12f * s)
-            canvas.scale(s, s)
-            canvas.drawLine(5f, 12.5f, 10f, 17.5f, check)
-            canvas.drawLine(10f, 17.5f, 19f, 7f, check)
-            canvas.restore()
-        } else {
-            fill.color = offFill
-            ring.color = offRing
-            canvas.drawCircle(cx, cy, r, fill)
-            canvas.drawCircle(cx, cy, r - 1f, ring)
-        }
-    }
-
-    override fun setAlpha(alpha: Int) {
-        fill.alpha = alpha; ring.alpha = alpha; check.alpha = alpha; invalidateSelf()
-    }
-
-    override fun setColorFilter(colorFilter: ColorFilter?) {
-        fill.colorFilter = colorFilter; ring.colorFilter = colorFilter; check.colorFilter = colorFilter; invalidateSelf()
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
