@@ -69,14 +69,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MovieBoxProvider.cs3",
         "status": 1,
-        "version": 20,
+        "version": 21,
         "name": "MovieBoxProvider",
         "internalName": "MovieBoxProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "MovieBox Movies and Series (multi-audio)",
-        "fileSize": 121497,
+        "fileSize": 121198,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -85,6 +85,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-bbd22a1c4a407ee0440033ab70a8860677286e3a91f0d40c8bee7f930dc45e55"
+        "fileHash": "sha256-c5faa54084d6324ae65ab2770f63302550a9d7dd3c3d2a92c1a195c32f29b1dc"
     }
 ]
