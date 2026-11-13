@@ -14,6 +14,7 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -457,25 +458,55 @@ class SettingsFragment(
             markDirty()
         }
 
+        // On Android TV a D-pad RIGHT from the focused row cannot enter the buttons
+        // (focus search only finds views outside the focused rect), so the row hands
+        // focus to its first action button explicitly.
+        row.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                focusFirstAction(row)
+            } else false
+        }
+
         // Rename + reorder buttons: explicit sizes and a visible disc background, so
         // they can always be seen (previously they collapsed to zero and vanished).
         if (!isDefault) {
-            row.addView(
-                iconButton(IconDrawable.Kind.PENCIL, SettingsTheme.SUBTLE, "Rename") { rename(st, title) },
-                rowIconParams(),
-            )
+            val pencil = iconButton(IconDrawable.Kind.PENCIL, SettingsTheme.SUBTLE, "Rename") { rename(st, title) }
+            pencil.tag = "pencil"
+            // First action button: LEFT returns the focus to the row itself
+            pencil.setOnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    row.requestFocus(); true
+                } else false
+            }
+            row.addView(pencil, rowIconParams())
         } else {
             row.addView(View(ctx), LinearLayout.LayoutParams(dp(40), 1))
         }
-        row.addView(
-            iconButton(IconDrawable.Kind.CHEVRON_UP, SettingsTheme.SUBTLE, "Move up") { move(st, -1) }.apply { tag = "up" },
-            rowIconParams(),
-        )
+        val up = iconButton(IconDrawable.Kind.CHEVRON_UP, SettingsTheme.SUBTLE, "Move up") { move(st, -1) }.apply { tag = "up" }
+        // When there is no rename button (default sections), LEFT from "up" goes to the row
+        up.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                (row.findViewWithTag<View>("pencil") ?: row).requestFocus(); true
+            } else false
+        }
+        row.addView(up, rowIconParams())
         row.addView(
             iconButton(IconDrawable.Kind.CHEVRON_DOWN, SettingsTheme.SUBTLE, "Move down") { move(st, 1) }.apply { tag = "down" },
             rowIconParams(),
         )
         return row
+    }
+
+    /** First enabled action button (rename / up / down) — D-pad RIGHT on the row enters here. */
+    private fun focusFirstAction(row: View): Boolean {
+        listOf("pencil", "up", "down").forEach { tag ->
+            val v = row.findViewWithTag<View>(tag)
+            if (v != null && v.isEnabled && v.visibility == View.VISIBLE) {
+                v.requestFocus()
+                return true
+            }
+        }
+        return false
     }
 
     private fun rowIconParams() = LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(2) }
@@ -569,6 +600,7 @@ class SettingsFragment(
         }
         AlertDialog.Builder(ctx)
             .setTitle("Rename")
+            .setMessage("New name for this section")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
                 st.name = input.text.toString().trim().takeIf { it.isNotEmpty() && it != sec.title }
