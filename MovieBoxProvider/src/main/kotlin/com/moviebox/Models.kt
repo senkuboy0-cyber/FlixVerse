@@ -38,6 +38,18 @@ object MovieBoxApi {
     )
     private val deviceId: String = ByteArray(16).also { SecureRandom().nextBytes(it) }
         .joinToString("") { "%02x".format(it) }
+    private val gaid: String = (1..4).joinToString("-") {
+        ByteArray(4).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
+    }
+    // APK certificate stamp (x-client-build): the server accepts any valid-looking stamp.
+    private const val CERT_SHA256 = "03d4b741632d136bc23e2de4c6adcdb7712f1980b619c183221801730bbd0410"
+    private const val BUILD_SALT = "oneroom"
+    // Indian IP prefixes: play-info and resource serve their FULL stream/resource list only to
+    // requests that carry an Indian x-forwarded-for; anything else gets 23-second placeholders.
+    private val ipPrefixes = listOf(
+        "103.241", "49.36", "117.195", "106.198", "122.162",
+        "157.32", "182.70", "103.58", "27.60", "59.90"
+    )
     @Volatile private var bearerToken: String? = null
 
     val preferredHost: String
@@ -53,6 +65,14 @@ object MovieBoxApi {
         val ts = System.currentTimeMillis().toString()
         return "$ts,${md5(ts.reversed().toByteArray())}"
     }
+
+    private fun buildTag(tsMillis: Long): String {
+        val stamp = "${tsMillis / 1000}${"%03d".format(tsMillis % 1000)}000${SecureRandom().nextInt(1000)}"
+        return "$stamp.${md5("$CERT_SHA256$BUILD_SALT$stamp".toByteArray(Charsets.UTF_8))}"
+    }
+
+    private fun spoofedIp(): String =
+        "${ipPrefixes.random()}.${SecureRandom().nextInt(253) + 1}.${SecureRandom().nextInt(253) + 1}"
 
     private fun signature(method: String, contentType: String, url: String, body: String?): String {
         val ts = System.currentTimeMillis()
@@ -70,14 +90,18 @@ object MovieBoxApi {
 
     private fun headers(method: String, url: String, body: String?, token: String?): Map<String, String> {
         val contentType = if (body != null) "application/json; charset=utf-8" else "application/json"
+        val build = buildTag(System.currentTimeMillis())
         val h = mutableMapOf(
             "user-agent" to APP_USER_AGENT,
             "accept" to "application/json",
             "content-type" to contentType,
             "x-client-token" to clientToken(),
             "x-tr-signature" to signature(method, contentType, url, body),
-            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"3.0.13.0325.03","version_code":50020088,"os":"android","os_version":"13","device_id":"$deviceId","install_store":"ps","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Calcutta","sp_code":""}""",
+            "x-client-build" to build,
+            "x-client-info" to """{"package_name":"com.community.oneroom","version_name":"4.0.01.0813.03","version_code":50020120,"os":"android","os_version":"13","install_ch":"ps","device_id":"$deviceId","install_store":"ps","gaid":"$gaid","brand":"Redmi","model":"23078RKD5C","system_language":"en","net":"NETWORK_WIFI","region":"IN","timezone":"Asia/Kolkata","sp_code":"40401","X-Play-Mode":"2","X-Client-Build":"$build"}""",
             "x-client-status" to "0",
+            // Without this Indian client IP the API answers with 23-second placeholders everywhere
+            "x-forwarded-for" to spoofedIp(),
         )
         if (!token.isNullOrBlank()) h["Authorization"] = "Bearer $token"
         return h
@@ -459,4 +483,4 @@ object Cinemeta {
 }
 
 // CDN rejects browser User-Agents (428) and any Referer (429); players must send this UA.
-const val APP_USER_AGENT = "com.community.oneroom/50020088 (Linux; U; Android 13; en_US; Pixel 7; Build/TQ3A.230901.001; Cronet/145.0.7582.0)"
+const val APP_USER_AGENT = "com.community.oneroom/50020120 (Linux; U; Android 13; en_US; 23078RKD5C; Build/TQ2A.230405.003; Cronet/135.0.7012.3)"

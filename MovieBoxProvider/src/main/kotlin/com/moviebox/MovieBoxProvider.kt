@@ -201,12 +201,17 @@ class MovieBoxProvider : MainAPI() {
 
         // ---------- Method 1: app API ----------
         suspend fun appLinks(sid: String, language: String) {
-            val linkName = "$name $language"
+            /** MP4 keeps the plain name; DASH/HLS get a format suffix so they are visible as such. */
+            fun linkLabel(type: ExtractorLinkType?) = when (type) {
+                ExtractorLinkType.DASH -> "$name $language DASH"
+                ExtractorLinkType.M3U8 -> "$name $language HLS"
+                else -> "$name $language"
+            }
             suspend fun send(url: String, quality: Int?, type: ExtractorLinkType?, cookie: String? = null) {
                 if (!seenLinks.add("$language|${fileKey(url)}")) return
                 found = true
                 gotLinks.add(sid)
-                callback.invoke(newExtractorLink(name, linkName, url, type) {
+                callback.invoke(newExtractorLink(name, linkLabel(type), url, type) {
                     // CDN: no Referer (429) and a non-browser User-Agent (browser UA gives 428)
                     this.headers = buildMap {
                         put("User-Agent", APP_USER_AGENT)
@@ -238,7 +243,7 @@ class MovieBoxProvider : MainAPI() {
                         val res = r["resolution"]?.asInt()
                         val link = r["resourceLink"]?.asText()
                         val real = if (!isPlaceholder(link)) link else rid?.let { realLink(sid, it) }
-                        real?.let { send(it, res, ExtractorLinkType.VIDEO) }
+                        real?.let { send(it, res, linkType(it, null)) }
                     }
                 }
             }
@@ -251,7 +256,7 @@ class MovieBoxProvider : MainAPI() {
                     sendSubs(r["extCaptions"])
                     val link = r["resourceLink"]?.asText()
                     val real = if (!isPlaceholder(link)) link else realLink(sid, rid)
-                    real?.let { send(it, r["resolution"]?.asInt(), ExtractorLinkType.VIDEO) }
+                    real?.let { send(it, r["resolution"]?.asInt(), linkType(it, null)) }
                 }
             }
 
@@ -261,68 +266,8 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
-        // ---------- Method 2: website API ----------
-        suspend fun webLinks(sid: String, detailPath: String, language: String) {
-            val linkName = "$name $language"
-            MovieBoxWeb.media(sid, detailPath, season, episode).forEach { data ->
-                sendSubs(data["captions"])
-                val items = listOf("streams", "hls", "dash", "downloads").flatMap { data[it]?.toList() ?: emptyList() }
-                items.forEach { s ->
-                    val url = s["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
-                    if (isPlaceholder(url, s["duration"]?.asInt())) return@forEach
-                    if (!seenLinks.add("$language|${fileKey(url)}")) return@forEach
-                    val q = s["resolution"]?.asInt()?.takeIf { it > 0 }
-                        ?: s["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
-                    found = true
-                    callback.invoke(newExtractorLink(name, linkName, url, linkType(url, s["format"]?.asText())) {
-                        // Website CDN (bcdnxw) plays only from the site: browser UA + site Referer
-                        this.headers = buildMap {
-                            put("User-Agent", MovieBoxWeb.BROWSER_UA)
-                            put("Referer", "${MovieBoxWeb.SITE}/")
-                            put("Origin", MovieBoxWeb.SITE)
-                            s["signCookie"]?.asText()?.takeIf { it.isNotBlank() }?.let { put("Cookie", it) }
-                        }
-                        if (q != null) this.quality = q
-                    })
-                }
-            }
-        }
-
-        // Method 1 first: the app API for every language; record which languages gave links
+        // Method 1 first: the app API for every language; TV API second; both always run.
         suspend fun tryApp(sid: String, language: String) = appLinks(sid, language)
-        // Website detail: gives each language's detailPath (needed for DASH) and the full dubs list
-        val webMain = MovieBoxWeb.subject(id)
-        val webPaths = mutableMapOf<String, String>()
-        webMain?.get("detailPath")?.asText()?.let { webPaths[id] = it }
-        webMain?.get("dubs")?.forEach { d ->
-            val sid = d["subjectId"]?.asText() ?: return@forEach
-            d["detailPath"]?.asText()?.let { webPaths.putIfAbsent(sid, it) }
-        }
-
-        // Website DASH (.mpd, hevc) — sent for every language alongside the app and TV APIs
-        suspend fun dashLinks(sid: String, language: String) {
-            val path = webPaths[sid] ?: return
-            MovieBoxWeb.dash(sid, path, season, episode).forEach { d ->
-                val url = d["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
-                if (!seenLinks.add("$language|${fileKey(url)}")) return@forEach
-                val cookie = d["signCookie"]?.asText().orEmpty()
-                val q = d["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
-                found = true
-                callback.invoke(newExtractorLink(name, "$name $language DASH", url, ExtractorLinkType.DASH) {
-                    this.headers = buildMap {
-                        put("User-Agent", MovieBoxWeb.BROWSER_UA)
-                        // sbcdnw only accepts movie-box.co / movieboxhd.net as Referer (others give 429)
-                        put("Referer", "https://movie-box.co/")
-                        put("Accept", "*/*")
-                        if (cookie.isNotBlank()) {
-                            put("Cookie", cookie)
-                            put("X-MB-Token", cookie)
-                        }
-                    }
-                    if (q != null && q > 0) this.quality = q
-                })
-            }
-        }
 
         // ---------- TV API (MovieBox TV): DASH, HLS, then its MP4 (another server, kept even if the same file) ----------
         suspend fun tvLinks(sid: String, language: String, tv: JsonNode?) {
@@ -362,12 +307,11 @@ class MovieBoxProvider : MainAPI() {
             }
         }
 
-        /** One language: every link from the app API and the TV API, plus website DASH. No source is skipped. */
+        /** One language: every link from the app API and the TV API. No source is skipped. */
         suspend fun languageLinks(sid: String, language: String): Unit = coroutineScope {
             val tvJob = async { runCatching { MovieBoxTv.playInfo(sid, season, episode) }.getOrNull() }
             tryApp(sid, language)
             tvLinks(sid, language, tvJob.await())
-            dashLinks(sid, language)
             Unit
         }
 
@@ -376,6 +320,73 @@ class MovieBoxProvider : MainAPI() {
         // Website = backup only: used just when the app and TV APIs gave no link at all.
         // Then its dubs list is used (hidden dubs tried via the app API first), and its own links last.
         if (gotLinks.isNotEmpty()) return true
+
+        // Website detail: gives each language's detailPath (needed for DASH) and the full dubs list
+        val webMain = MovieBoxWeb.subject(id)
+        val webPaths = mutableMapOf<String, String>()
+        webMain?.get("detailPath")?.asText()?.let { webPaths[id] = it }
+        webMain?.get("dubs")?.forEach { d ->
+            val sid = d["subjectId"]?.asText() ?: return@forEach
+            d["detailPath"]?.asText()?.let { webPaths.putIfAbsent(sid, it) }
+        }
+
+        // Website DASH (.mpd, hevc) — backup only
+        suspend fun dashLinks(sid: String, language: String) {
+            val path = webPaths[sid] ?: return
+            MovieBoxWeb.dash(sid, path, season, episode).forEach { d ->
+                val url = d["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
+                if (!seenLinks.add("$language|${fileKey(url)}")) return@forEach
+                val cookie = d["signCookie"]?.asText().orEmpty()
+                val q = d["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+                found = true
+                callback.invoke(newExtractorLink(name, "$name Web $language DASH", url, ExtractorLinkType.DASH) {
+                    this.headers = buildMap {
+                        put("User-Agent", MovieBoxWeb.BROWSER_UA)
+                        // sbcdnw only accepts movie-box.co / movieboxhd.net as Referer (others give 429)
+                        put("Referer", "https://movie-box.co/")
+                        put("Accept", "*/*")
+                        if (cookie.isNotBlank()) {
+                            put("Cookie", cookie)
+                            put("X-MB-Token", cookie)
+                        }
+                    }
+                    if (q != null && q > 0) this.quality = q
+                })
+            }
+        }
+
+        // Website play/download links — backup only
+        suspend fun webLinks(sid: String, detailPath: String, language: String) {
+            MovieBoxWeb.media(sid, detailPath, season, episode).forEach { data ->
+                sendSubs(data["captions"])
+                val items = listOf("streams", "hls", "dash", "downloads").flatMap { data[it]?.toList() ?: emptyList() }
+                items.forEach { s ->
+                    val url = s["url"]?.asText()?.takeIf { it.startsWith("http") } ?: return@forEach
+                    if (isPlaceholder(url, s["duration"]?.asInt())) return@forEach
+                    if (!seenLinks.add("$language|${fileKey(url)}")) return@forEach
+                    val type = linkType(url, s["format"]?.asText())
+                    val suffix = when (type) {
+                        ExtractorLinkType.DASH -> " DASH"
+                        ExtractorLinkType.M3U8 -> " HLS"
+                        else -> ""
+                    }
+                    val q = s["resolution"]?.asInt()?.takeIf { it > 0 }
+                        ?: s["resolutions"]?.asText()?.split(",")?.mapNotNull { it.trim().toIntOrNull() }?.maxOrNull()
+                    found = true
+                    callback.invoke(newExtractorLink(name, "$name Web $language$suffix", url, type) {
+                        // Website CDN (bcdnxw) plays only from the site: browser UA + site Referer
+                        this.headers = buildMap {
+                            put("User-Agent", MovieBoxWeb.BROWSER_UA)
+                            put("Referer", "${MovieBoxWeb.SITE}/")
+                            put("Origin", MovieBoxWeb.SITE)
+                            s["signCookie"]?.asText()?.takeIf { it.isNotBlank() }?.let { put("Cookie", it) }
+                        }
+                        if (q != null) this.quality = q
+                    })
+                }
+            }
+        }
+
         val webSources = LinkedHashMap<String, Pair<String, String>>() // sid -> (detailPath, language)
         webMain?.get("dubs")?.forEach { d ->
             val sid = d["subjectId"]?.asText() ?: return@forEach
