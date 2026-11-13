@@ -1,7 +1,7 @@
 import com.lagradost.cloudstream3.gradle.tasks.CompileDexTask
 
 // use an integer for version numbers
-version = 51
+version = 52
 
 // The CloudStream gradle plugin's compileDex task dexes ONLY the Kotlin compiler output
 // (src/main/java is ignored and jar dependencies never reach classes.dex), so the
