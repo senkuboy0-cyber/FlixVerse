@@ -222,11 +222,8 @@ class MovieBoxProvider : MainAPI() {
             }
             val resourceIds = Collections.synchronizedList(mutableListOf<String>())
 
-            // 1) play-info streams (MP4 / HLS / DASH with signed cookie).
-            // Reliable fetch: the stream list is served per edge host — the preferred host
-            // may return only a 900 s preview manifest (or no streams) while the other
-            // hosts return the full one, which used to hide the DASH/HLS links.
-            val play = MovieBoxApi.playInfoReliable(sid, season, episode)
+            // 1) play-info streams (MP4 / HLS / DASH with signed cookie)
+            val play = MovieBoxApi.playInfo(sid, season, episode)
             play?.get("streams")?.forEach { s ->
                 val url = s["url"]?.asText()
                 if (isPlaceholder(url, s["duration"]?.asInt())) return@forEach
