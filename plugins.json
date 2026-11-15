@@ -86,25 +86,5 @@
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/MovieBoxProvider/icon.png",
         "apiVersion": 1,
         "fileHash": "sha256-e6bc424d7c76ba8e98ce3d975d1a1393b57ac778a2bb83d5c5f981e2d6e88965"
-    },
-    {
-        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/StreamVerse.cs3",
-        "status": 1,
-        "version": 2,
-        "name": "StreamVerse",
-        "internalName": "StreamVerse",
-        "authors": [
-            "senkuboy0-cyber"
-        ],
-        "description": "StreamVerse IPTV - 101 live TV playlist categories plus user-added playlists with a modern settings screen",
-        "fileSize": 53689,
-        "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
-        "language": "hi",
-        "tvTypes": [
-            "Live"
-        ],
-        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/StreamVerse/icon.png",
-        "apiVersion": 1,
-        "fileHash": "sha256-d531a6ba6ad00be958ddd2f5ef13bbc5fa40a85a7aaf93ab8a46488d8474ae8c"
     }
 ]
