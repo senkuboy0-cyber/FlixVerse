@@ -97,7 +97,7 @@
             "senkuboy0-cyber"
         ],
         "description": "StreamVerse IPTV - 101 live TV playlist categories plus user-added playlists with a modern settings screen",
-        "fileSize": 54803,
+        "fileSize": 53689,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -105,6 +105,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/StreamVerse/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-371e60a05e2ea946ec3937ba245a5634c49cab2f4f7ba119a06ea4c7e278f7cd"
+        "fileHash": "sha256-3fbf6910adf9b040b8406d116f1db17b436d8adac332ff61f0f9e06e746a3f13"
     }
 ]
