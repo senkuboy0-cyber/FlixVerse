@@ -1,4 +1,4 @@
-package com.streamverse
+package com.streamverse.setting
 
 import android.content.Context
 import android.content.Intent
@@ -22,6 +22,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
+import com.streamverse.PlaylistFetcher
+import com.streamverse.PlaylistSource
 import java.io.ByteArrayOutputStream
 
 /**
@@ -30,16 +32,15 @@ import java.io.ByteArrayOutputStream
  *  - add a new playlist by extension name + playlist URL, or by picking an
  *    M3U / M3U8 file from the device,
  *  - review and remove saved playlists,
- *  - apply everything with "Save & Reset": each saved playlist becomes its own
- *    separate provider, so it never mixes with the curated StreamVerse categories.
+ *  - apply everything with "Save & Reset": the app restarts and every saved
+ *    playlist becomes its own separate provider, so it never mixes with the
+ *    curated StreamVerse categories.
  *
- * The palette and view helpers live in StreamVerseUi.kt, icons are drawn with
- * Canvas (SvIconDrawable.kt). All focusable views have a visible focus ring so the
+ * The palette and view helpers live in SettingsUi.kt, icons are drawn with
+ * Canvas (SettingsIcons.kt). All focusable views have a visible focus ring so the
  * screen works with a TV remote.
  */
-class SettingsDialog(
-    private val onSaved: (List<PlaylistStore.Item>) -> Unit,
-) : DialogFragment() {
+class SettingsDialog : DialogFragment() {
 
     companion object {
         private const val PICK_FILE_REQUEST = 1001
@@ -555,12 +556,9 @@ class SettingsDialog(
         dirty = false
         updateSaveButton()
 
-        // Register every not-yet-registered playlist as its own provider right away
-        onSaved(saved.toList())
-
         AlertDialog.Builder(requireContext())
             .setTitle("Playlists saved")
-            .setMessage("Saved playlists are registered as separate providers. Restart the app to fully apply every change?")
+            .setMessage("Restart the app now? Every saved playlist is registered as its own separate provider on the next start.")
             .setPositiveButton("Restart") { _, _ ->
                 dismiss()
                 restartApp()
@@ -578,7 +576,7 @@ class SettingsDialog(
                 context.startActivity(Intent.makeRestartActivityTask(componentName))
             } else {
                 context.startActivity(
-                    Intent(componentName).addFlags(
+                    Intent().setComponent(componentName).addFlags(
                         Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     )
                 )

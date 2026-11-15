@@ -1,14 +1,16 @@
-package com.streamverse
+package com.streamverse.setting
 
 import android.content.Context
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.streamverse.PlaylistSource
 import java.io.File
 
 /**
  * Persists the playlists the user adds from the settings screen.
  * Each item carries an extension name plus either a playlist URL or a local file path;
- * the plugin registers one separate provider for every saved item.
+ * the plugin registers one separate provider for every saved item on the next app start
+ * (Save & Reset restarts the app, which is when the providers appear).
  */
 object PlaylistStore {
 

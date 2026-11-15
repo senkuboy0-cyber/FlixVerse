@@ -1,4 +1,4 @@
-package com.streamverse
+package com.streamverse.setting
 
 import android.graphics.Canvas
 import android.graphics.Color
