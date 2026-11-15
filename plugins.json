@@ -90,7 +90,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/StreamVerse.cs3",
         "status": 1,
-        "version": 1,
+        "version": 2,
         "name": "StreamVerse",
         "internalName": "StreamVerse",
         "authors": [
@@ -105,6 +105,6 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/refs/heads/main/StreamVerse/icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-3fbf6910adf9b040b8406d116f1db17b436d8adac332ff61f0f9e06e746a3f13"
+        "fileHash": "sha256-d531a6ba6ad00be958ddd2f5ef13bbc5fa40a85a7aaf93ab8a46488d8474ae8c"
     }
 ]
