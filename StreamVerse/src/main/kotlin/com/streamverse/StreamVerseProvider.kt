@@ -1,6 +1,5 @@
 package com.streamverse
 
-import android.util.Base64
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.HomePageList
@@ -369,9 +368,10 @@ object PlaylistFetcher {
 /**
  * Shared live-TV logic for StreamVerse and for every user-added playlist provider.
  *
- * Each channel card encodes a [BaseIptvProvider.ChannelPayload] (playlist source +
- * stream url + metadata) as URL-safe Base64 JSON, so load() and loadLinks() can
- * restore the full context without any server-side state.
+ * Each channel card carries a [BaseIptvProvider.ChannelPayload] (playlist source +
+ * stream url + metadata) as a raw JSON url. CloudStream passes urls starting with
+ * `{"` through fixUrl untouched, so load() and loadLinks() receive the payload
+ * verbatim and can restore the full context without any server-side state.
  */
 abstract class BaseIptvProvider : MainAPI() {
 
@@ -391,13 +391,12 @@ abstract class BaseIptvProvider : MainAPI() {
         val ref: String? = null, // per-channel Referer
     )
 
-    private val base64Flags = Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
-
+    /** Serializes the payload as the item url; must start with `{"` so fixUrl keeps it intact. */
     fun encodePayload(payload: ChannelPayload): String =
-        Base64.encodeToString(mapper.writeValueAsBytes(payload), base64Flags)
+        mapper.writeValueAsString(payload)
 
     fun decodePayload(encoded: String): ChannelPayload? = try {
-        mapper.readValue<ChannelPayload>(Base64.decode(encoded, base64Flags))
+        mapper.readValue<ChannelPayload>(encoded)
     } catch (_: Exception) {
         null
     }
@@ -422,23 +421,27 @@ abstract class BaseIptvProvider : MainAPI() {
             this.posterUrl = channel.logo
         }
 
-    /** Groups one playlist's channels by group-title into home page rows. */
-    suspend fun groupedLists(source: PlaylistSource): List<HomePageList> {
+    /**
+     * The whole playlist as ONE home page row: every channel of the playlist sits
+     * inside the single category (title = the category name), never split by
+     * group-title into separate News / Kids / ... rows.
+     */
+    suspend fun playlistRow(source: PlaylistSource, title: String): List<HomePageList> {
         val channels = PlaylistFetcher.channels(source)
         if (channels.isEmpty()) return emptyList()
-        return channels
-            .groupBy { it.group?.takeIf { g -> g.isNotBlank() } ?: "Live Channels" }
-            .map { (group, chans) ->
-                HomePageList(group, chans.sortedBy { it.name.lowercase() }.map { toItem(it, source) })
-            }
-            .sortedBy { it.name.lowercase() }
+        return listOf(
+            HomePageList(
+                title,
+                channels.sortedBy { it.name.lowercase() }.map { toItem(it, source) }
+            )
+        )
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (page > 1) return newHomePageResponse(emptyList(), false)
         return try {
             val source = PlaylistFetcher.sourceOfKey(request.data)
-            val lists = groupedLists(source)
+            val lists = playlistRow(source, request.name)
             newHomePageResponse(lists, false)
         } catch (_: Exception) {
             newHomePageResponse(emptyList(), false)
@@ -571,8 +574,8 @@ class StreamVerseProvider : BaseIptvProvider() {
 /**
  * One provider per user-added playlist (Settings > Add Playlist).
  * These providers are registered separately from StreamVerse, so their channels
- * never mix with the curated StreamVerse categories. The single "All Channels"
- * category expands into one home page row per group-title found in the playlist.
+ * never mix with the curated StreamVerse categories. The single home page row is
+ * titled with the playlist name and contains every channel of the playlist.
  */
 class CustomPlaylistProvider(
     private val item: PlaylistStore.Item,
@@ -585,7 +588,7 @@ class CustomPlaylistProvider(
         is PlaylistSource.Remote -> "remote|${src.url}"
     }
 
-    override val mainPage: List<MainPageData> = mainPageOf(sourceKey to "All Channels")
+    override val mainPage: List<MainPageData> = mainPageOf(sourceKey to item.name)
 
     override suspend fun search(query: String): List<SearchResponse> =
         searchSource(item.source(), query)
