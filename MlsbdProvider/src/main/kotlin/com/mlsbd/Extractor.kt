@@ -66,12 +66,12 @@ suspend fun resolveFinalUrl(startUrl: String, referer: String? = null): String? 
 // ─────────────────────────────────────────────────────────────
 
 /** GDFlix file pages: bootstrap list "Name : ...", "Size : ..." */
-private fun isGdflixPage(doc: Document): Boolean {
+internal fun isGdflixPage(doc: Document): Boolean {
     return doc.selectFirst("ul > li.list-group-item:containsOwn(Name)") != null
 }
 
 /** GdxFiles (Laravel multi-host) pages: every route carries a ?hash= token */
-private fun isGdxFilesPage(doc: Document): Boolean {
+internal fun isGdxFilesPage(doc: Document): Boolean {
     return doc.selectFirst("a[href*=hash=]") != null
 }
 
@@ -118,7 +118,7 @@ class GdflixHandle : GdflixBase() {
     override var mainUrl = "gdflix.*"
 }
 
-private suspend fun extractGdflixLinks(
+internal suspend fun extractGdflixLinks(
     url: String,
     doc: Document,
     subtitleCallback: (SubtitleFile) -> Unit,
@@ -130,7 +130,11 @@ private suspend fun extractGdflixLinks(
     val quality = getIndexQuality(fileName)
     val tag = qualityTag(fileName)
 
+    // skip exact duplicates (the same anchor can match two selectors below)
+    val emitted = mutableSetOf<String>()
+
     suspend fun emit(link: String, server: String) {
+        if (!emitted.add("$server|$link")) return
         callback.invoke(
             newExtractorLink("Gdflix", "Gdflix [$server] [$tag]", link, ExtractorLinkType.VIDEO) {
                 this.quality = quality
@@ -258,7 +262,7 @@ class GdxfilesHandle : GdxFilesBase() {
     override var mainUrl = "gdxfiles.*"
 }
 
-private suspend fun extractGdxFilesLinks(
+internal suspend fun extractGdxFilesLinks(
     url: String,
     doc: Document,
     subtitleCallback: (SubtitleFile) -> Unit,

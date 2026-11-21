@@ -503,10 +503,20 @@ class MlsbdProvider : MainAPI() {
         else -> 9
     }
 
+    // file-page path hint: only shape-route urls that look like file pages - direct
+    // media links (pixeldrain /u/, googleusercontent, ...) go straight to the pool
+    private val filePagePathRegex = Regex("""/(file|view|video|watch|share|dl)/""", RegexOption.IGNORE_CASE)
+
     /**
-     * One uniform routing path: cloudstream picks the extractor - the registered ones
-     * through their mainUrls, everything unknown falls through to the built-in
-     * cloudstream extractors.
+     * One uniform routing path:
+     * 1. our own file-host families first, routed by PAGE SHAPE straight to this
+     *    plugin's extractors. Sending them through the shared loadExtractor pool lets
+     *    extractors from OTHER installed plugins grab these links first (all plugins
+     *    join one pool and the last registered one is checked first) and emit their
+     *    own names with the hub url prefixed, e.g.
+     *    "https://savelinks.me/view/... GDFlix [FAST CLOUD] HDRIP [3.45GB] 1080p".
+     * 2. everything else goes through the global pool - our registered mainUrls and,
+     *    for unknown hosts, the built-in cloudstream extractors.
      */
     private suspend fun routeLink(
         targetUrl: String,
@@ -514,49 +524,70 @@ class MlsbdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val handled = runCatching {
+        if (filePagePathRegex.containsMatchIn(targetUrl) &&
+            routeKnownFamily(targetUrl, subtitleCallback, callback)
+        ) return
+
+        runCatching {
             loadExtractor(targetUrl, referer = referer, subtitleCallback = subtitleCallback, callback = callback)
-        }.getOrDefault(false)
-        if (!handled) {
-            // renamed-deployment handle: the four file-host families rotate domains, so a
-            // renamed deployment matches no mainUrl. Verify the page shape server-side and
-            // hand the link to the matching extractor; if no shape matches, emit nothing.
-            runCatching { routeByPageShape(targetUrl, subtitleCallback, callback) }
         }
     }
 
-    /** Detects which file-host family an unmatched link belongs to and routes it. */
-    private suspend fun routeByPageShape(
+    /**
+     * Detects the file-host family by page shape and routes the link. Renamed
+     * deployments are covered automatically because the shape is the site structure,
+     * not the domain name. Returns true when a known family matched.
+     */
+    private suspend fun routeKnownFamily(
         url: String,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ) {
-        val doc = app.get(url).document
-
-        when {
-            doc.selectFirst("ul > li.list-group-item:containsOwn(Name)") != null ->
-                GdflixHandle().getUrl(url, null, subtitleCallback, callback)
-
-            doc.selectFirst("a[href*=hash=]") != null ->
-                GdxfilesHandle().getUrl(url, null, subtitleCallback, callback)
-
-            doc.selectFirst("a.premium-btn") != null ->
-                MulticloudlinksHandle().getUrl(url, null, subtitleCallback, callback)
-
-            else -> {
+    ): Boolean {
+        return try {
+            val doc = app.get(url).document
+            when {
+                // GDFlix: bootstrap file list "Name : ..."
+                isGdflixPage(doc) -> {
+                    extractGdflixLinks(url, doc, subtitleCallback, callback)
+                    true
+                }
+                // GdxFiles: every route carries a ?hash= token
+                isGdxFilesPage(doc) -> {
+                    extractGdxFilesLinks(url, doc, subtitleCallback, callback)
+                    true
+                }
+                // MultiCloudLinks mirror hub
+                doc.selectFirst("a.premium-btn") != null -> {
+                    MulticloudlinksHandle().getUrl(url, null, subtitleCallback, callback)
+                    true
+                }
+                // HubCloud download page
+                url.contains("/video/", true) && doc.selectFirst("div.vd") != null -> {
+                    HubCloud().getUrl(url, null, subtitleCallback, callback)
+                    true
+                }
                 // FilePress is an SPA - detect it through its public API instead of the HTML
-                val id = Regex("""([0-9a-fA-F]{24})""").find(url)?.groupValues?.get(1)
-                if (id != null) {
-                    val base = getBaseUrl(url)
-                    val shaped = runCatching {
-                        app.get(
-                            "$base/file/video/$id/",
-                            headers = mapOf("Accept" to "application/json, text/plain, */*")
-                        ).parsedSafe<Map<String, Any?>>()?.containsKey("status") == true
-                    }.getOrDefault(false)
-                    if (shaped) FilepressHandle().getUrl(url, null, subtitleCallback, callback)
+                else -> {
+                    val id = Regex("""([0-9a-fA-F]{24})""").find(url)?.groupValues?.get(1)
+                    if (id == null) {
+                        false
+                    } else {
+                        val base = getBaseUrl(url)
+                        val shaped = runCatching {
+                            app.get(
+                                "$base/file/video/$id/",
+                                headers = mapOf("Accept" to "application/json, text/plain, */*")
+                            ).parsedSafe<Map<String, Any?>>()?.containsKey("status") == true
+                        }.getOrDefault(false)
+                        if (shaped) {
+                            FilepressHandle().getUrl(url, null, subtitleCallback, callback)
+                            true
+                        } else false
+                    }
                 }
             }
+        } catch (e: Exception) {
+            false
         }
     }
 
