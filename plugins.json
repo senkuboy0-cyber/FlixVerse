@@ -45,14 +45,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MlsbdProvider.cs3",
         "status": 1,
-        "version": 4,
+        "version": 5,
         "name": "MlsbdProvider",
         "internalName": "MlsbdProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "MLSBD Provider for Movies and TV Series",
-        "fileSize": 111681,
+        "fileSize": 112857,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/FlixVerse",
         "language": "hi",
         "tvTypes": [
@@ -64,7 +64,7 @@
         ],
         "iconUrl": "https://mlsbd.co/wp-content/uploads/2020/09/mlsbd-icon.png",
         "apiVersion": 1,
-        "fileHash": "sha256-ffa02118df191a250788b4c2a34b4d6fabbbe921298a06c860b3dd6886899ca8"
+        "fileHash": "sha256-cd46253cb575b051ffc827f194be5c42dfd68f0654c59be2f0ba798142f62c6b"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/FlixVerse/builds/MovieBoxProvider.cs3",
