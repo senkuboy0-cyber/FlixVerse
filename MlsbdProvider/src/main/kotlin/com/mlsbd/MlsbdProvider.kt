@@ -88,9 +88,11 @@ class MlsbdProvider : MainAPI() {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
-    private suspend inline fun <reified T : Any> getJson(url: String): T? = runCatching {
-        mapper.readValue(app.get(url, headers = ua, timeout = 60).text)
-    }.getOrNull()
+    private suspend inline fun <reified T : Any> getJson(url: String): T? = try {
+        mapper.readValue<T>(app.get(url, headers = ua, timeout = 60).text)
+    } catch (_: Exception) {
+        null
+    }
 
     private val apiBase get() = "$mainUrl/wp-json/wp/v2/posts"
 
