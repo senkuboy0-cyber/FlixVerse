@@ -37,12 +37,6 @@ fun getIndexQuality(str: String?): Int {
     }
 }
 
-/** "[1080p]" / "[Unknown]" suffix used in every emitted link name */
-fun qualityTag(str: String?): String {
-    val q = getIndexQuality(str)
-    return if (q == Qualities.Unknown.value) "Unknown" else "${q}p"
-}
-
 /** Follows a redirect chain (max 7 hops) to the final url */
 suspend fun resolveFinalUrl(startUrl: String, referer: String? = null): String? {
     var currentUrl = startUrl
@@ -128,7 +122,6 @@ internal suspend fun extractGdflixLinks(
     val fileName = doc.select("ul > li.list-group-item:contains(Name)").text()
         .substringAfter("Name : ").trim()
     val quality = getIndexQuality(fileName)
-    val tag = qualityTag(fileName)
 
     // skip exact duplicates (the same anchor can match two selectors below)
     val emitted = mutableSetOf<String>()
@@ -136,7 +129,7 @@ internal suspend fun extractGdflixLinks(
     suspend fun emit(link: String, server: String) {
         if (!emitted.add("$server|$link")) return
         callback.invoke(
-            newExtractorLink("Gdflix", "Gdflix [$server] [$tag]", link, ExtractorLinkType.VIDEO) {
+            newExtractorLink("Gdflix", "Gdflix [$server]", link, ExtractorLinkType.VIDEO) {
                 this.quality = quality
                 this.headers = mapOf("Referer" to base)
             }
@@ -273,11 +266,10 @@ internal suspend fun extractGdxFilesLinks(
         ?: url.trimEnd('/').substringAfterLast('/')
     val fileName = doc.title().substringBefore(" |").trim().ifBlank { fileId }
     val quality = getIndexQuality(fileName)
-    val tag = qualityTag(fileName)
 
     suspend fun emit(link: String, server: String) {
         callback.invoke(
-            newExtractorLink("Gdxfiles", "Gdxfiles [$server] [$tag]", link, ExtractorLinkType.VIDEO) {
+            newExtractorLink("Gdxfiles", "Gdxfiles [$server]", link, ExtractorLinkType.VIDEO) {
                 this.quality = quality
             }
         )
@@ -428,26 +420,51 @@ open class FilepressBase : ExtractorApi() {
             }
 
             // 2) "Fast Download" (gpixelFastDownload) - two-stage, strictly server-gated:
-            //    stage 1: POST /api/file/downlaod/  {id, method:"gpixelFastDownload"} -> 24-hex copy-job id
-            //    stage 2: POST /api/file/downlaod2/ {id:<job id>}                     -> direct video link
-            //    Every other answer (status:false / 404 / non-hex data) means the button
-            //    does not exist on this file -> emit nothing.
+            //    stage 1: POST /api/file/downlaod/  {id, method:"gpixelFastDownload"}
+            //             -> a 24-hex copy-job id when a new job is accepted, OR a
+            //                {"status":"pending|downloading|uploading"} progress object
+            //                when one is already running for this file (RACE: both shapes
+            //                occur for the same file depending on timing)
+            //    stage 2: POST /api/file/downlaod2/ {id:<job id>} -> the direct link once
+            //             the server-side copy has finished, progress object before that
+            //    Both stages need polling: a single immediate call almost always lands
+            //    mid-job and the link would silently never be emitted.
             runCatching {
-                val init = app.post(
-                    "$base/api/file/downlaod/",
-                    headers = apiHeaders,
-                    json = mapOf("id" to fileId, "method" to "gpixelFastDownload", "captchaValue" to "")
-                ).parsedSafe<Map<String, Any?>>()
+                var jobId: String? = null
 
-                val jobId = init?.takeIf { it["status"] == true }
-                    ?.let { it["data"] as? String }
-                    ?.takeIf { it.matches(Regex("^[0-9a-f]{24}$")) }
+                // stage 1: wait until the server accepts the job and hands out its id
+                for (attempt in 0 until 5) {
+                    val init = app.post(
+                        "$base/api/file/downlaod/",
+                        headers = apiHeaders,
+                        json = mapOf("id" to fileId, "method" to "gpixelFastDownload", "captchaValue" to "")
+                    ).parsedSafe<Map<String, Any?>>()
 
-                if (jobId != null) {
+                    val data = init?.takeIf { it["status"] == true }?.get("data")
+                    if (data is String) {
+                        if (data.startsWith("http")) {
+                            emitDownload(data, fileName, callback)
+                            return
+                        }
+                        if (data.matches(Regex("^[0-9a-f]{24}$"))) {
+                            jobId = data
+                            break
+                        }
+                        // unexpected string -> do not spin on it
+                        break
+                    }
+                    // progress object -> the job is running, ask again shortly
+                    delay(4000)
+                }
+
+                val job = jobId ?: return
+
+                // stage 2: poll the job to completion (~40s budget)
+                for (attempt in 0 until 8) {
                     val result = app.post(
                         "$base/api/file/downlaod2/",
                         headers = apiHeaders,
-                        json = mapOf("id" to jobId, "method" to "gpixelFastDownload", "captchaValue" to "")
+                        json = mapOf("id" to job, "method" to "gpixelFastDownload", "captchaValue" to "")
                     ).parsedSafe<Map<String, Any?>>()
 
                     val link = result?.takeIf { it["status"] == true }
@@ -458,6 +475,7 @@ open class FilepressBase : ExtractorApi() {
                         emitDownload(link, fileName, callback)
                         return
                     }
+                    delay(5000)
                 }
             }
 
@@ -511,7 +529,7 @@ open class FilepressBase : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         callback.invoke(
-            newExtractorLink("Filepress", "Filepress [${qualityTag(fileName)}]", link, ExtractorLinkType.VIDEO) {
+            newExtractorLink("Filepress", "Filepress", link, ExtractorLinkType.VIDEO) {
                 this.quality = getIndexQuality(fileName)
             }
         )
@@ -697,7 +715,7 @@ open class MultiCloudLinksBase : ExtractorApi() {
                     callback.invoke(
                         newExtractorLink(
                             "Multicloudlinks",
-                            "Multicloudlinks [watch] [${qualityTag(fname)}]",
+                            "Multicloudlinks [watch]",
                             link,
                             ExtractorLinkType.VIDEO
                         ) {
@@ -714,13 +732,12 @@ open class MultiCloudLinksBase : ExtractorApi() {
                 ?.takeIf { it.isNotBlank() }
                 ?: doc.title().substringBefore(" -").trim()
             val quality = getIndexQuality(fileName)
-            val tag = qualityTag(fileName)
 
             suspend fun emit(link: String, server: String) {
                 callback.invoke(
                     newExtractorLink(
                         "Multicloudlinks",
-                        "Multicloudlinks [$server] [$tag]",
+                        "Multicloudlinks [$server]",
                         link,
                         ExtractorLinkType.VIDEO
                     ) {
@@ -930,14 +947,13 @@ open class HubCloud : ExtractorApi() {
 
         val document = app.get(link).document
         val header = document.select("div.card-header").text()
-        val size = document.select("i#size").text()
         val quality = getIndexQuality(header)
 
         suspend fun myCallback(link: String, server: String = "") {
             callback.invoke(
                 newExtractorLink(
                     "${name}${server}",
-                    "${name}${server} ${header}[${size}]",
+                    "${name}${server}",
                     link,
                     ExtractorLinkType.VIDEO
                 ) {

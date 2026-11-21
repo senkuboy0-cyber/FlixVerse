@@ -372,7 +372,8 @@ class MlsbdProvider : MainAPI() {
             if (request.data.isNotBlank()) append("&categories=${request.data}")
         }
         val items = fetchPosts(api).mapNotNull { it.toSearchResponse() }
-        return newHomePageResponse(HomePageList(request.name, items, isHorizontalImages = true), items.isNotEmpty())
+        // portrait posters: mlsbd uses vertical cover art, not landscape cards
+        return newHomePageResponse(HomePageList(request.name, items, isHorizontalImages = false), items.isNotEmpty())
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -575,8 +576,12 @@ class MlsbdProvider : MainAPI() {
                         val base = getBaseUrl(url)
                         val shaped = runCatching {
                             app.get(
-                                "$base/file/video/$id/",
-                                headers = mapOf("Accept" to "application/json, text/plain, */*")
+                                "$base/api/file/get/$id",
+                                headers = mapOf(
+                                    "Accept" to "application/json, text/plain, */*",
+                                    "Origin" to base,
+                                    "Referer" to "$base/file/$id"
+                                )
                             ).parsedSafe<Map<String, Any?>>()?.containsKey("status") == true
                         }.getOrDefault(false)
                         if (shaped) {
