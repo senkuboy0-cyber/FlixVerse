@@ -1,6 +1,9 @@
 package com.mlsbd
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
@@ -77,6 +80,18 @@ class MlsbdProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
+    // Own kotlin-module mapper: the shared parsedSafe path loses the generic element
+    // type for plugin data classes (List<WpPost> came back as List<LinkedHashMap> and
+    // crashed on cast). mapper.readValue<T>() materializes the full reified type - the
+    // pattern proven by FourKHDHubProvider in this repo.
+    private val mapper = jacksonObjectMapper().apply {
+        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+    }
+
+    private suspend inline fun <reified T : Any> getJson(url: String): T? = runCatching {
+        mapper.readValue(app.get(url, headers = ua, timeout = 60).text)
+    }.getOrNull()
+
     private val apiBase get() = "$mainUrl/wp-json/wp/v2/posts"
 
     // --- Main Page Categories (WordPress category ids, verified live) ---
@@ -146,8 +161,7 @@ class MlsbdProvider : MainAPI() {
             var actualMediaType = if (isSeries) "tv" else "movie"
 
             val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
-                .parsedSafe<TmdbSearch>()
+            val searchRes = getJson<TmdbSearch>("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
 
             val normTitle = normalizeTitle(title)
@@ -175,8 +189,7 @@ class MlsbdProvider : MainAPI() {
 
             if (tmdbId == null) return TmdbAssets(null, null)
 
-            val images = app.get("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY")
-                .parsedSafe<TmdbImages>()
+            val images = getJson<TmdbImages>("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY")
 
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
                 ?: images?.logos?.firstOrNull { it.lang == null }
@@ -336,22 +349,15 @@ class MlsbdProvider : MainAPI() {
 
     /** related posts from the first tag of the current post */
     private suspend fun fetchRecommendations(post: WpPost): List<SearchResponse> {
-        return runCatching {
-            val tagId = post.embedded?.terms?.firstOrNull()?.firstOrNull { it.id != null }?.id
-                ?: return emptyList()
-            val res = app.get(
-                "$apiBase?tags=$tagId&per_page=9&_fields=id,slug,title,link,content,date",
-                headers = ua,
-                timeout = 60
-            ).parsedSafe<List<WpPost>>() ?: return emptyList()
-            res.filter { it.slug != post.slug }.take(8).mapNotNull { it.toSearchResponse() }
-        }.getOrDefault(emptyList())
+        val tagId = post.embedded?.terms?.firstOrNull()?.firstOrNull { it.id != null }?.id
+            ?: return emptyList()
+        val res = getJson<List<WpPost>>("$apiBase?tags=$tagId&per_page=9&_fields=id,slug,title,link,content,date")
+            ?: return emptyList()
+        return res.filter { it.slug != post.slug }.take(8).mapNotNull { it.toSearchResponse() }
     }
 
     private suspend fun fetchPosts(api: String): List<WpPost> {
-        return runCatching {
-            app.get(api, headers = ua, timeout = 60).parsedSafe<List<WpPost>>()
-        }.getOrNull() ?: emptyList()
+        return getJson<List<WpPost>>(api) ?: emptyList()
     }
 
     // ─────────────────────────────────────────
